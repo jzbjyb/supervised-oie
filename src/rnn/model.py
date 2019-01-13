@@ -1,6 +1,9 @@
 """ Usage:
     model [--train=TRAIN_FN] [--dev=DEV_FN] --test=TEST_FN [--pretrained=MODEL_DIR] [--load_hyperparams=MODEL_JSON] [--saveto=MODEL_DIR]
 """
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))) # append parent path
+
 import numpy as np
 import math
 import pandas
@@ -27,7 +30,6 @@ from common.symbols import SPACY_POS_TAGS
 from collections import defaultdict
 from parsers.spacy_wrapper import spacy_whitespace_parser as spacy_ws
 
-import os
 import json
 import pdb
 from keras.models import model_from_json
@@ -103,8 +105,9 @@ class RNN_model:
                                      verbose = 1,
                                      save_best_only = False)   # TODO: is there a way to save by best val_acc?
 
-        return [sample_output_callback,
-                checkpoint]
+        #return [sample_output_callback,
+        #        checkpoint]
+        return [checkpoint]
 
     def plot(self, fn, train_fn):
         """
@@ -178,7 +181,6 @@ class RNN_model:
         sent_str = " ".join(sent)
 
         # Extract predicates by looking at verbal POS
-
         preds = [(word.i, str(word))
                  for word
                  in spacy_ws(sent_str)
@@ -249,6 +251,7 @@ class RNN_model:
 
         # Split according to sentences and encode
         sents = self.get_sents_from_df(df)
+        logging.info("{} has {} sentences".format(fn, len(sents)))
         return (self.encode_inputs(sents),
                 self.encode_outputs(sents))
 
@@ -636,8 +639,7 @@ def pad_sequences(sequences, pad_func, maxlen = None):
 
 def load_pretrained_rnn(model_dir):
     """ Static trained model loader function """
-    rnn_params = json.load(open(os.path.join(model_dir,
-                                             "./model.json")))["rnn"]
+    rnn_params = json.load(open(os.path.join(model_dir, "model.json")))["rnn"]
 
     logging.info("Loading model from: {}".format(model_dir))
     rnn = RNN_model(model_fn = RNN_model.set_model_from_file,

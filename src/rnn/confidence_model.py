@@ -1,6 +1,9 @@
 """ Usage:
     confidence_model [--train=TRAIN_FN] [--dev=DEV_FN] --test=TEST_FN [--pretrained=MODEL_DIR] [--load_hyperparams=MODEL_JSON] [--saveto=MODEL_DIR]
 """
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))) # append parent path
+
 import numpy as np
 import math
 import pandas
@@ -28,7 +31,6 @@ from common.symbols import NLTK_POS_TAGS
 from collections import defaultdict
 from rnn.model import Sample, pad_sequences, Pad_sample
 
-import os
 import json
 from keras.models import model_from_json
 import logging
@@ -118,10 +120,10 @@ class Confidence_model:
         Plot this model to an image file
         Train file is needed as it influences the dimentions of the RNN
         """
-        from keras.utils.visualize_util import plot
+        #from keras.utils.visualize_util import plot
         X, Y = self.load_dataset(train_fn)
         self.model_fn()
-        plot(self.model, to_file = fn)
+        #plot(self.model, to_file = fn)
 
     def load_dataset(self, fn):
         """

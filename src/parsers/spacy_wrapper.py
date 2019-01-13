@@ -47,7 +47,7 @@ class spacy_with_whitespace_tokenizer:
     """
     Get a spacy parser instance with white space tokenization.
     """
-    parser = spacy.load('en',
+    parser = spacy.load('en_core_web_sm',
                         create_make_doc = WhitespaceTokenizer)
 
     # TODO: migrate to spacy V2.0, make sure that whitespacetokenizer still
