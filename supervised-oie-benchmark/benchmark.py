@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argMatch] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argMatch | --bowMatch] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -79,6 +79,9 @@ class ColoredExtraction(object):
         pred_cond = ColoredExtraction.gen_binary([pred_start], [pred_end], len(sent))
         args_cond = [ColoredExtraction.gen_binary([arg_start], [arg_end], len(sent)) \
             for arg_start, arg_end in zip(args_start, args_end)]
+        for ind in [pred_start] + args_start:
+            if ind < 1:
+                return '[CAN\'T align] ' + self.extraction.__str__()
         result = []
         for i, ch in enumerate(sent):
             if pred_cond[i]:
@@ -371,6 +374,9 @@ if __name__ == '__main__':
 
     elif args['--argMatch']:
         matchingFunc = Matcher.argMatch
+
+    elif args['--bowMatch']:
+        matchingFunc = Matcher.bowMatch
 
     else:
         matchingFunc = Matcher.lexicalMatch
