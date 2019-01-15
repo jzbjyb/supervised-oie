@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argMatch | --bowMatch] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argMatch | --bowMatch | --exactlySameMatch] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -27,6 +27,7 @@ from itertools import groupby
 from termcolor import colored
 from xtermcolor import colorize
 import random
+import textwrap, pprint
 logging.basicConfig(level = logging.INFO)
 
 from oie_readers.stanfordReader import StanfordReader
@@ -44,6 +45,10 @@ from operator import itemgetter
 SEED = 2019
 random.seed(SEED)
 np.random.seed(SEED)
+
+indenter = textwrap.TextWrapper(initial_indent='\t', width=100,
+    subsequent_indent='\t')
+pp = pprint.PrettyPrinter(indent=4)
 
 class ColoredExtraction(object):
     def __init__(self, extraction):
@@ -73,6 +78,8 @@ class ColoredExtraction(object):
         args = [self.extraction.elementToStr(arg) for arg in self.extraction.args]
         sent = ' {} '.format(self.extraction.sent) # add space to avoid 'on' match 'money'
         pred_start = sent.find(' {} '.format(pred)) + 1
+        if pred_start < 1:
+            pred_start = sent.find(' {} '.format(pred.capitalize())) + 1
         pred_end = pred_start + len(pred)
         args_start = [sent.find(' {} '.format(arg)) + 1 for arg in args]
         args_end = [args_start[i] + len(arg) for i, arg in enumerate(args)]
@@ -110,16 +117,33 @@ class Benchmark:
 
     def get_ana_banner(self, ind):
         result = [
+            '',
             '# ====================== #',
             '# ===== ANALYSIS {} ===== #'.format(ind),
-            '# ====================== #']
+            '# ====================== #',
+            '']
         return '\n'.join(result)
+
+    def extraction_showcase(self, cases, use_gold=True):
+        for s, exts in cases:
+            print('* {}'.format(colored(s, attrs=['bold'])))
+            if use_gold:
+                print('--- ground truth ---')
+                for e in self.gold[s]:
+                    print('{}'.format(ColoredExtraction(e)))
+                    #print(indenter.fill(ColoredExtraction(e).__str__()))
+                    #pp.pprint(ColoredExtraction(e).__str__())
+            print('--- extractions ---')
+            for e in exts:
+                print('{}'.format(ColoredExtraction(e)))
+                #print(e.unmatched, e.matched)
 
     def error_ana_bi(self, predicted1, preddicted2):
         pass
 
     def error_ana_uni(self, predicted, showcase=5):
         ColoredExtraction.color_show()
+        predicted_keys = [s for s in self.gold if s in predicted]
         '''
         ana1
         '''
@@ -129,55 +153,65 @@ class Benchmark:
         cases = Benchmark.get_n_random_sample_out_of(sent_empty, showcase)
         print('{} samples of them'.format(len(cases)))
         for s in cases:
-            print('* {}'.format(s))
+            print('* {}'.format(colored(s, attrs=['bold'])))
             for e in self.gold[s]:
-                #print('\t{}'.format(e))
-                print('\t{}'.format(ColoredExtraction(e)))
+                print('{}'.format(ColoredExtraction(e)))
         '''
         ana2 
         '''
         print(self.get_ana_banner(2))
-        wrong_ext = np.array([(s, e) for s in predicted for e in predicted[s] 
+        wrong_ext = np.array([(s, e) for s in predicted_keys for e in predicted[s] 
             if len(e.matched) == 0])
         num_ext_all = len([1 for s in predicted for e in predicted[s]])
         num_ext_wrong = len(wrong_ext)
         print('{} out of {} extractions are wrong'.format(num_ext_wrong, num_ext_all))
         wrong_ext_dict = dict((k, list(e[1] for e in g)) 
             for k, g in groupby(wrong_ext, lambda x: x[0]))
-        cases = Benchmark.get_n_random_sample_out_of(
-            np.array(list(wrong_ext_dict.items())), showcase)
-        print('{} samples of them'.format(len(cases)))
-        for s, exts in cases:
-            print('* {}'.format(s))
-            print('\t--- ground truth ---')
-            for e in self.gold[s]:
-                #print('\t{}'.format(e))
-                print('\t{}'.format(ColoredExtraction(e)))
-            print('\t--- wrong ---')
-            for e in exts:
-                #print('\t{}'.format(e))
-                print('\t{}'.format(ColoredExtraction(e)))
+        avg_sent_len = np.average([len(s.split(' ')) for s in wrong_ext_dict])
+        #cases = Benchmark.get_n_random_sample_out_of(
+        #    np.array(list(wrong_ext_dict.items())), showcase)
+        cases = np.array(sorted(wrong_ext_dict.items(), 
+            key=lambda x: np.min([np.max(e.unmatched) for e in x[1]])))[:showcase]
+        print('{} most incorrect samples'.format(len(cases)))
+        print('average sentence length: {}'.format(avg_sent_len))
+        self.extraction_showcase(cases)
         '''
         ana3
         '''
         print(self.get_ana_banner(3))
-        correct_ext = np.array([(s, e) for s in predicted for e in predicted[s] 
+        correct_ext = np.array([(s, e) for s in predicted_keys for e in predicted[s] 
             if len(e.matched) > 0])
         correct_ext_dict = dict((k, list(e[1] for e in g))
             for k, g in groupby(correct_ext, lambda x: x[0]))
+        avg_sent_len = np.average([len(s.split(' ')) for s in correct_ext_dict])
         cases = Benchmark.get_n_random_sample_out_of(
             np.array(list(correct_ext_dict.items())), showcase)
         print('{} samples of correct'.format(len(cases)))
-        for s, exts in cases:
-            print('* {}'.format(s))
-            print('\t--- ground truth ---')
-            for e in self.gold[s]:
-                #print('\t{}'.format(e))
-                print('\t{}'.format(ColoredExtraction(e)))
-            print('\t--- correct ---')
-            for e in exts:
-                #print('\t{}'.format(e))
-                print('\t{}'.format(ColoredExtraction(e)))
+        self.extraction_showcase(cases)
+        '''
+        ana4, 5
+        '''
+        print(self.get_ana_banner(4))
+        print('ground truth correctly extracted')
+        gold_ext_got = np.array([(s, e) for s in self.gold for e in self.gold[s] 
+            if len(e.matched) > 0])
+        print('avg #args: {}'.format(np.mean([len(s[1].args) for s in gold_ext_got])))
+        gold_ext_got = dict((k, list(e[1] for e in g))
+            for k, g in groupby(gold_ext_got, lambda x: x[0]))
+        cases = Benchmark.get_n_random_sample_out_of(
+            np.array(list(gold_ext_got.items())), showcase)
+        self.extraction_showcase(cases, use_gold=False)
+        print(self.get_ana_banner(5))
+        print('ground truth not correctly extracted')
+        gold_ext_not_got = np.array([(s, e) for s in self.gold for e in self.gold[s] 
+            if len(e.matched) == 0])
+        print('avg #args: {}'.format(np.mean([len(s[1].args) for s in gold_ext_not_got])))
+        gold_ext_not_got = dict((k, list(e[1] for e in g))
+            for k, g in groupby(gold_ext_not_got, lambda x: x[0]))
+        cases = Benchmark.get_n_random_sample_out_of(
+            np.array(list(gold_ext_not_got.items())), showcase)
+        self.extraction_showcase(cases, use_gold=False)
+
 
     def compare(self, predicted, matchingFunc, output_fn, error_file = None):
         ''' Compare gold against predicted using a specified matching function.
@@ -194,7 +228,6 @@ class Benchmark:
         #predicted = Benchmark.normalizeDict(predicted)
         #gold = Benchmark.normalizeDict(self.gold)
         gold = self.gold
-
         for sent, goldExtractions in gold.items():
             if sent not in predicted:
                 # The extractor didn't find any extractions for this sentence
@@ -204,33 +237,44 @@ class Benchmark:
                 continue
 
             predictedExtractions = predicted[sent]
-
-            for goldEx in goldExtractions:
+            for i, goldEx in enumerate(goldExtractions):
                 correctTotal += 1
                 found = False
 
-                for predictedEx in predictedExtractions:
-                    if output_fn in predictedEx.matched:
+                for j, predictedEx in enumerate(predictedExtractions):
+                    if len(predictedEx.matched) > 0:
                         # This predicted extraction was already matched against a gold extraction
                         # Don't allow to match it again
                         continue
 
-                    if matchingFunc(goldEx,
+                    match_bool, match_score = matchingFunc(goldEx,
                                     predictedEx,
                                     ignoreStopwords = True,
-                                    ignoreCase = True):
-
+                                    ignoreCase = True)
+                    if match_bool:
                         y_true.append(1)
                         y_scores.append(predictedEx.confidence)
-                        predictedEx.matched.append(output_fn)
+                        predictedEx.matched.append(match_score)
+                        goldEx.matched.append(predictedEx) # save alignment results
                         found = True
                         break
+                    else:
+                        predictedEx.unmatched.append(match_score) # store the score for error analysis
+
+                # the rest are unmatched, but we want the score
+                for jj in range(j+1, len(predictedExtractions)):
+                    predictedEx = predictedExtractions[jj]
+                    match_bool, match_score = matchingFunc(goldEx,
+                                    predictedEx,
+                                    ignoreStopwords = True,
+                                    ignoreCase = True)
+                    predictedEx.unmatched.append(match_score)
 
                 if not found:
                     errors.append(goldEx.index)
                     unmatchedCount += 1
 
-            for predictedEx in [x for x in predictedExtractions if (output_fn not in x.matched)]:
+            for predictedEx in [x for x in predictedExtractions if len(x.matched) == 0]:
                 # Add false positives
                 y_true.append(0)
                 y_scores.append(predictedEx.confidence)
@@ -377,6 +421,9 @@ if __name__ == '__main__':
 
     elif args['--bowMatch']:
         matchingFunc = Matcher.bowMatch
+
+    elif args['--exactlySameMatch']:
+        matchingFunc = Matcher.exactlySameMatch
 
     else:
         matchingFunc = Matcher.lexicalMatch

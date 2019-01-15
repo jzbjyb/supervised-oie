@@ -42,7 +42,7 @@ class Matcher:
             s1Words = Matcher.removeStopwords(s1Words)
             s2Words = Matcher.removeStopwords(s2Words)
 
-        return s1Words  == s2Words
+        return s1Words  == s2Words, int(s1Words  == s2Words)
 
 
     @staticmethod
@@ -66,7 +66,7 @@ class Matcher:
         coverage = float(count) / len(sRef)
 
 
-        return coverage > Matcher.LEXICAL_THRESHOLD
+        return coverage > Matcher.LEXICAL_THRESHOLD, coverage
 
     @staticmethod
     def bleuMatch(ref, ex, ignoreStopwords, ignoreCase):
@@ -92,7 +92,25 @@ class Matcher:
         coverage = float(count) / len(sRef)
 
 
-        return coverage > Matcher.LEXICAL_THRESHOLD
+        return coverage > Matcher.LEXICAL_THRESHOLD, coverage
+
+    @staticmethod
+    def exactlySameMatch(ref, ex, ignoreStopwords, ignoreCase):
+        if len(ref.args) != len(ex.args):
+            return False, 0
+        for i, ref_arg in enumerate(ref.args):
+            if ref.elementToStr(ref_arg) != ex.elementToStr(ex.args[i]):
+                return False, 0
+        if ref.elementToStr(ref.pred) != ex.elementToStr(ex.pred):
+            return False, 0
+        return True, 1
+
+    @staticmethod
+    def predArgMatch(ref, ex, ignoreStopwords, ignoreCase):
+        pred, pred_score = Matcher.predMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argMatch(ref, ex, ignoreStopwords, ignoreCase)
+        return pred and arg, min(pred_score, arg_score)
+
 
     @staticmethod
     def removeStopwords(ls):
