@@ -44,14 +44,34 @@ class Matcher:
 
         return s1Words  == s2Words, int(s1Words  == s2Words)
 
+    @staticmethod
+    def predLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
+        """
+        Return whehter gold and predicted extractions agree on the predicate
+        """
+        sRef = ref.elementToStr(ref.pred).split(' ')
+        sEx = ex.elementToStr(ex.pred).split(' ')
+
+        count = 0
+
+        for w1 in sRef:
+            for w2 in sEx:
+                if w1 == w2:
+                    count += 1
+
+        # We check how well does the extraction lexically cover the reference
+        # Note: this is somewhat lenient as it doesn't penalize the extraction for
+        #       being too long
+        coverage = float(count) / len(sRef)
+        return coverage > Matcher.LEXICAL_THRESHOLD, coverage
 
     @staticmethod
     def argMatch(ref, ex, ignoreStopwords, ignoreCase):
         """
         Return whehter gold and predicted extractions agree on the arguments
         """
-        sRef = ' '.join([ref.elementToStr(elem) for elem in ref.args])
-        sEx = ' '.join([ex.elementToStr(elem) for elem in ex.args])
+        sRef = ' '.join([ref.elementToStr(elem) for elem in ref.args]).split(' ')
+        sEx = ' '.join([ex.elementToStr(elem) for elem in ex.args]).split(' ')
 
         count = 0
 
@@ -107,7 +127,7 @@ class Matcher:
 
     @staticmethod
     def predArgMatch(ref, ex, ignoreStopwords, ignoreCase):
-        pred, pred_score = Matcher.predMatch(ref, ex, ignoreStopwords, ignoreCase)
+        pred, pred_score = Matcher.predLexicalMatch(ref, ex, ignoreStopwords, ignoreCase)
         arg, arg_score = Matcher.argMatch(ref, ex, ignoreStopwords, ignoreCase)
         return pred and arg, min(pred_score, arg_score)
 

@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argMatch | --bowMatch | --exactlySameMatch] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argMatch | --bowMatch | --exactlySameMatch | --predArgMatch] [--error] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -124,7 +124,7 @@ class Benchmark:
             '']
         return '\n'.join(result)
 
-    def extraction_showcase(self, cases, use_gold=True):
+    def extraction_showcase(self, cases, use_gold=True, use_align=False):
         for s, exts in cases:
             print('* {}'.format(colored(s, attrs=['bold'])))
             if use_gold:
@@ -136,12 +136,62 @@ class Benchmark:
             print('--- extractions ---')
             for e in exts:
                 print('{}'.format(ColoredExtraction(e)))
+                if use_align:
+                    print('-> {}'.format(ColoredExtraction(e.aligned.items()[0][1])))
                 #print(e.unmatched, e.matched)
 
-    def error_ana_bi(self, predicted1, preddicted2):
-        pass
+    def to_dict(self, extractions):
+        extractions_dict = dict((k, list(e[1] for e in g)) 
+            for k, g in groupby(extractions, lambda x: x[0]))
+        return extractions_dict
 
-    def error_ana_uni(self, predicted, showcase=5):
+    def error_ana_bi(self, predicted1, predicted2, tag1, tag2, showcase=5):
+        '''
+        ana1, 2
+        '''
+        print('both correct: {}'.format(len([(s, e) for s in self.gold for e in self.gold[s] 
+            if (tag1 in e.aligned and tag2 in e.aligned)])))
+        print(self.get_ana_banner(1))
+        print('{} correct but not {}'.format(tag1, tag2))
+        pred1 = [(s, e) for s in self.gold for e in self.gold[s] 
+            if (tag1 in e.aligned and tag2 not in e.aligned)]
+        print(len(pred1), np.average([len(s.split(' ')) for s, e in pred1]))
+        pred1 = self.to_dict(pred1)
+        cases = Benchmark.get_n_random_sample_out_of(
+            np.array(list(pred1.items())), showcase)
+        for s, exts in cases:
+            print('* {}'.format(colored(s, attrs=['bold'])))
+            print('--- extractions ---')
+            for e in exts:
+                print('{}'.format(ColoredExtraction(e)))
+                if True:
+                    print('-> {}'.format(ColoredExtraction(e.aligned.items()[0][1])))
+                print('-- other --')
+                if s in predicted2:
+                    for ee in predicted2[s]:
+                        print('{}'.format(ColoredExtraction(ee)))
+        print(self.get_ana_banner(2))
+        print('{} correct but not {}'.format(tag2, tag1))
+        pred2 = [(s, e) for s in self.gold for e in self.gold[s] 
+            if (tag2 in e.aligned and tag1 not in e.aligned)]
+        print(len(pred2), np.average([len(s.split(' ')) for s, e in pred2]))
+        pred2 = self.to_dict(pred2)
+        cases = Benchmark.get_n_random_sample_out_of(
+            np.array(list(pred2.items())), showcase)
+        for s, exts in cases:
+            print('* {}'.format(colored(s, attrs=['bold'])))
+            print('--- extractions ---')
+            for e in exts:
+                print('{}'.format(ColoredExtraction(e)))
+                if True:
+                    print('-> {}'.format(ColoredExtraction(e.aligned.items()[0][1])))
+                print('-- other --')
+                if s in predicted1:
+                    for ee in predicted1[s]:
+                        print('{}'.format(ColoredExtraction(ee)))
+
+
+    def error_ana_uni(self, predicted, tag, showcase=5):
         ColoredExtraction.color_show()
         predicted_keys = [s for s in self.gold if s in predicted]
         '''
@@ -162,7 +212,7 @@ class Benchmark:
         print(self.get_ana_banner(2))
         wrong_ext = np.array([(s, e) for s in predicted_keys for e in predicted[s] 
             if len(e.matched) == 0])
-        num_ext_all = len([1 for s in predicted for e in predicted[s]])
+        num_ext_all = len([1 for s in predicted_keys for e in predicted[s]])
         num_ext_wrong = len(wrong_ext)
         print('{} out of {} extractions are wrong'.format(num_ext_wrong, num_ext_all))
         wrong_ext_dict = dict((k, list(e[1] for e in g)) 
@@ -194,7 +244,7 @@ class Benchmark:
         print(self.get_ana_banner(4))
         print('ground truth correctly extracted')
         gold_ext_got = np.array([(s, e) for s in self.gold for e in self.gold[s] 
-            if len(e.matched) > 0])
+            if tag in e.aligned])
         print('avg #args: {}'.format(np.mean([len(s[1].args) for s in gold_ext_got])))
         gold_ext_got = dict((k, list(e[1] for e in g))
             for k, g in groupby(gold_ext_got, lambda x: x[0]))
@@ -204,7 +254,7 @@ class Benchmark:
         print(self.get_ana_banner(5))
         print('ground truth not correctly extracted')
         gold_ext_not_got = np.array([(s, e) for s in self.gold for e in self.gold[s] 
-            if len(e.matched) == 0])
+            if tag not in e.aligned])
         print('avg #args: {}'.format(np.mean([len(s[1].args) for s in gold_ext_not_got])))
         gold_ext_not_got = dict((k, list(e[1] for e in g))
             for k, g in groupby(gold_ext_not_got, lambda x: x[0]))
@@ -213,7 +263,7 @@ class Benchmark:
         self.extraction_showcase(cases, use_gold=False)
 
 
-    def compare(self, predicted, matchingFunc, output_fn, error_file = None):
+    def compare(self, predicted, tag, matchingFunc, output_fn, error_file = None):
         ''' Compare gold against predicted using a specified matching function.
             Outputs PR curve to output_fn '''
 
@@ -255,7 +305,7 @@ class Benchmark:
                         y_true.append(1)
                         y_scores.append(predictedEx.confidence)
                         predictedEx.matched.append(match_score)
-                        goldEx.matched.append(predictedEx) # save alignment results
+                        goldEx.aligned[tag] = predictedEx # save alignment results
                         found = True
                         break
                     else:
@@ -383,32 +433,38 @@ if __name__ == '__main__':
     logging.debug(args)
 
     if args['--stanford']:
-        predicted = StanfordReader()
-        predicted.read(args['--stanford'])
+        reader = StanfordReader
+        in_files = args['--stanford']
 
     if args['--props']:
-        predicted = PropSReader()
-        predicted.read(args['--props'])
+        reader = PropSReader
+        in_files = args['--props']
 
     if args['--ollie']:
-        predicted = OllieReader()
-        predicted.read(args['--ollie'])
+        reader = OllieReader
+        in_files = args['--ollie']
 
     if args['--reverb']:
-        predicted = ReVerbReader()
-        predicted.read(args['--reverb'])
+        reader = ReVerbReader
+        in_files = args['--reverb']
 
     if args['--clausie']:
-        predicted = ClausieReader()
-        predicted.read(args['--clausie'])
+        reader = ClausieReader
+        in_files = args['--clausie']
 
     if args['--openiefour']:
-        predicted = OpenieFourReader()
-        predicted.read(args['--openiefour'])
+        reader = OpenieFourReader
+        in_files = args['--openiefour']
 
     if args['--tabbed']:
-        predicted = TabReader()
-        predicted.read(args['--tabbed'])
+        reader = TabReader
+        in_files = args['--tabbed']
+
+    predicted_list = []
+    for in_file in in_files.split(':'):
+        predicted = reader()
+        predicted.read(in_file)
+        predicted_list.append(predicted)
 
     if args['--exactMatch']:
         matchingFunc = Matcher.argMatch
@@ -425,16 +481,27 @@ if __name__ == '__main__':
     elif args['--exactlySameMatch']:
         matchingFunc = Matcher.exactlySameMatch
 
+    elif args['--predArgMatch']:
+        matchingFunc = Matcher.predArgMatch
+
     else:
         matchingFunc = Matcher.lexicalMatch
 
     b = Benchmark(args['--gold'])
     out_filename = args['--out']
 
-    logging.info("Writing PR curve of {} to {}".format(predicted.name, out_filename))
-    compared_predicated = b.compare(predicted = predicted.oie,
+    logging.info("Writing PR curve of {} to {}".format(predicted_list[0].name, out_filename))
+    compared_predicated1 = b.compare(predicted = predicted_list[0].oie, tag='sys1',
               matchingFunc = matchingFunc,
               output_fn = out_filename,
               error_file = args["--error-file"])
-    b.error_ana_uni(compared_predicated, showcase=5)
+    if not args['--error']:
+        exit()
+    b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)
+    if len(predicted_list) > 1:
+        compared_predicated2 = b.compare(predicted = predicted_list[1].oie, tag='sys2',
+              matchingFunc = matchingFunc,
+              output_fn = out_filename,
+              error_file = args["--error-file"])
+        b.error_ana_bi(compared_predicated1, compared_predicated2, tag1='sys1', tag2='sys2', showcase=5)
 

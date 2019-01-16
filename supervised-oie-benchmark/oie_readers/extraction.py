@@ -20,6 +20,7 @@ class Extraction:
         self.confidence = confidence
         self.matched = []
         self.unmatched = []
+        self.aligned = {}
         self.questions = {}
         self.indsForQuestions = defaultdict(lambda: set())
         self.is_mwp = False
