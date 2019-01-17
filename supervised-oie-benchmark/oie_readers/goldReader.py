@@ -7,6 +7,7 @@ class GoldReader(OieReader):
     
     # Path relative to repo root folder
     default_filename = './oie_corpus/all.oie' 
+    SYN_HEAD = '<SYN_HEAD>'
     
     def __init__(self):
         self.name = 'Gold'
@@ -19,11 +20,20 @@ class GoldReader(OieReader):
                 text, rel = data[:2]
                 args = data[2:]
                 confidence = 1
+
+                # find syn_head if possible
+                heads = []
+                for i, arg in enumerate(args):
+                    if arg == GoldReader.SYN_HEAD:
+                        heads = args[i+1:]
+                        args = args[:i]
+                        break
                 
                 curExtraction = Extraction(pred = rel,
                                            head_pred_index = None,
                                            sent = text,
                                            confidence = float(confidence),
+                                           heads = heads,
                                            index = line_ind)
                 for arg in args:
                     curExtraction.addArg(arg)
@@ -59,8 +69,11 @@ class GoldReader(OieReader):
                         stanford_parse_result[sent] = Matcher.stanford_parse(sent_split)
                     dl = stanford_parse_result[sent]
                     head = Matcher.get_syntactic_head(sent_split, st, ed, depth_list=dl)
+                    if frag.find(head) == -1:
+                        raise Exception('wrong head: "{}" in "{}"'.format(head, frag))
                     heads.append(head)
-                fout.write('{}\t{}\t{}\t{}\n'.format(sent, pred, '\t'.join(args), '\t'.join(heads)))
+                fout.write('{}\t{}\t{}\t{}\t{}\n'.format(
+                    sent, pred, '\t'.join(args), GoldReader.SYN_HEAD, '\t'.join(heads)))
         
 
 if __name__ == '__main__' :

@@ -12,12 +12,13 @@ class Extraction:
     """
     Stores sentence, single predicate and corresponding arguments.
     """
-    def __init__(self, pred, head_pred_index, sent, confidence, question_dist = '', index = -1):
+    def __init__(self, pred, head_pred_index, sent, confidence, heads=None, question_dist = '', index = -1):
         self.pred = pred
         self.head_pred_index = head_pred_index
         self.sent = sent
         self.args = []
         self.confidence = confidence
+        self.heads = heads
         self.matched = []
         self.unmatched = []
         self.aligned = {}
