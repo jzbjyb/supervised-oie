@@ -1,8 +1,50 @@
 import string
 from nltk.translate.bleu_score import sentence_bleu
 from nltk.corpus import stopwords
+from nltk.parse import CoreNLPParser
+import nltk
+import numpy as np
+import time
+
+parser = CoreNLPParser(url='http://localhost:9001')
 
 class Matcher:
+    @staticmethod
+    def traverse_tree(tree, depth, depth_list, debug=False):
+        for subtree in tree:
+            if type(subtree) == nltk.tree.Tree:
+                Matcher.traverse_tree(subtree, depth + 1, depth_list, debug=debug)
+            elif type(subtree) == unicode:
+                if debug:
+                    print(subtree)
+                for word in subtree.split(u'\xa0'): # to avoid stanford nlp bug
+                    depth_list.append(depth)
+            else:
+                print(type(subtree))
+
+    @staticmethod
+    def stanford_parse(sentence):
+        pt = list(parser.parse(sentence))
+        dl = []
+        Matcher.traverse_tree(pt, 0, dl)
+        if len(dl) < len(sentence):
+            # TODO: there is a mismatching between parser output and raw sentence
+            print('>> --- stanfordnlp bug report ---')
+            print(sentence)
+            print(list(parser.parse(sentence)))
+            dl += (len(sentence) - len(dl)) * (dl[-1:] if len(dl) > 0 else [0])
+            print('<< --- stanfordnlp bug report ---')
+            assert len(dl) == len(sentence)
+        elif len(dl) > len(sentence):
+            raise Exception('parser longer bug')
+        return dl
+
+    @staticmethod
+    def get_syntactic_head(sentence, start_ind, end_ind, depth_list=None):
+        if depth_list is None:
+            depth_list = Matcher.stanford_parse(sentence)
+        return sentence[np.argmin(depth_list[start_ind:end_ind]) + start_ind]
+
     @staticmethod
     def bowMatch(ref, ex, ignoreStopwords, ignoreCase):
         """
