@@ -114,7 +114,7 @@ class Matcher:
         return pred >= 0, int(pred >= 0)
 
     @staticmethod
-    def argMatch(ref, ex, ignoreStopwords, ignoreCase):
+    def argLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
         """
         Return whehter gold and predicted extractions agree on the arguments
         """
@@ -185,9 +185,9 @@ class Matcher:
         return True, 1
 
     @staticmethod
-    def predArgMatch(ref, ex, ignoreStopwords, ignoreCase):
+    def predArgLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
         pred, pred_score = Matcher.predLexicalMatch(ref, ex, ignoreStopwords, ignoreCase)
-        arg, arg_score = Matcher.argMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argLexicalMatch(ref, ex, ignoreStopwords, ignoreCase)
         return pred and arg, min(pred_score, arg_score)
 
     @staticmethod
