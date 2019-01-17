@@ -108,6 +108,12 @@ class Matcher:
         return coverage > Matcher.LEXICAL_THRESHOLD, coverage
 
     @staticmethod
+    def predHeadMatch(ref, ex, ignoreStopwords, ignoreCase):
+        pred = ' ' + ex.elementToStr(ex.pred) + ' '
+        pred = pred.find(' ' + ref.heads[0] + ' ')
+        return pred >= 0, int(pred >= 0)
+
+    @staticmethod
     def argMatch(ref, ex, ignoreStopwords, ignoreCase):
         """
         Return whehter gold and predicted extractions agree on the arguments
@@ -129,6 +135,17 @@ class Matcher:
 
 
         return coverage > Matcher.LEXICAL_THRESHOLD, coverage
+
+    @staticmethod
+    def argHeadMatch(ref, ex, ignoreStopwords, ignoreCase):
+        if len(ref.args) != len(ex.args):
+            return False, 0
+        for i, arg in enumerate(ex.args):
+            arg = ' ' + ex.elementToStr(arg) + ' '
+            arg = arg.find(' ' + ref.heads[i + 1] + ' ')
+            if arg < 0:
+                return False, 0
+        return True, 1
 
     @staticmethod
     def bleuMatch(ref, ex, ignoreStopwords, ignoreCase):
@@ -173,6 +190,11 @@ class Matcher:
         arg, arg_score = Matcher.argMatch(ref, ex, ignoreStopwords, ignoreCase)
         return pred and arg, min(pred_score, arg_score)
 
+    @staticmethod
+    def predArgHeadMatch(ref, ex, ignoreStopwords, ignoreCase):
+        pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        return pred and arg, min(pred_score, arg_score)
 
     @staticmethod
     def removeStopwords(ls):
