@@ -153,6 +153,7 @@ models/
 best_models/
 .venv/
 oie_corpus/
+#!supervised-oie-benchmark/oie_corpus/test.oie.orig.correct # Exception
 *.tar.gz
 *.keep
 supervised-oie-benchmark/question_distributions/

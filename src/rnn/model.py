@@ -12,6 +12,7 @@ from docopt import docopt
 from keras.models import Sequential, Model
 from keras.layers import Input, Dense, LSTM, Embedding, \
     TimeDistributed, merge, Bidirectional, Dropout
+from keras.layers.merge import concatenate
 from keras.wrappers.scikit_learn import KerasClassifier
 from keras.utils import np_utils
 from keras.preprocessing.text import one_hot
@@ -188,6 +189,7 @@ class RNN_model:
 
         # Calculate num of samples (round up to the nearst multiple of sent_maxlen)
         num_of_samples = np.ceil(float(len(sent)) / self.sent_maxlen) * self.sent_maxlen
+        num_of_samples = int(num_of_samples)
 
         # Run RNN for each predicate on this sentence
         for ind, pred in preds:
@@ -423,6 +425,7 @@ class RNN_model:
                                             trainable = self.trainable_emb,
                                             input_length = self.sent_maxlen)
 
+
     def embed_pos(self):
         """
         Embed Part of Speech using this instance params
@@ -517,10 +520,13 @@ class RNN_model:
         ]
 
         ## Concat all inputs and run on deep network
-        output = predict_layer(dropout(latent_layers(merge([embed(inp)
+        #output = predict_layer(dropout(latent_layers(merge([embed(inp)
+        #                                                    for inp, embed in inputs_and_embeddings],
+        #                                                   mode = "concat",
+        #                                                   concat_axis = -1))))
+        output = predict_layer(dropout(latent_layers(concatenate([embed(inp)
                                                             for inp, embed in inputs_and_embeddings],
-                                                           mode = "concat",
-                                                           concat_axis = -1))))
+                                                           axis = -1))))
 
         # Build model
         self.model = Model(input = map(itemgetter(0), inputs_and_embeddings),

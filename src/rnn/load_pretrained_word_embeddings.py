@@ -10,7 +10,7 @@ logging.basicConfig(level = logging.DEBUG)
 import sys
 sys.path.append("./common")
 from symbols import UNK_INDEX, UNK_SYMBOL, UNK_VALUE
-from keras .layers import Embedding
+from keras.layers import Embedding, SpatialDropout1D
 
 class Glove:
     """
@@ -78,10 +78,18 @@ class Glove:
         Get a Keras Embedding layer, loading this embedding as pretrained weights
         The additional arguments given to this function are passed to the Keras Embbeding constructor.
         """
+        dp = 0 # no drop out
+        if 'dropout' in args:
+            dp = args['dropout']
+            del args['dropout']
+        emb = Embedding(self.vocab_size,self.dim, weights = [self.get_embedding_matrix()], **args)
+        return lambda x: SpatialDropout1D(dp)(emb(x))
+        '''
         return Embedding(self.vocab_size,
                          self.dim,
                          weights = [self.get_embedding_matrix()],
                          **args)
+        '''
 
 if __name__ == "__main__":
     args = docopt(__doc__)

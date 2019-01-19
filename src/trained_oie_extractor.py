@@ -21,7 +21,7 @@ import re
 import numpy as np
 from collections import defaultdict
 
-logging.basicConfig(level = logging.DEBUG)
+logging.basicConfig(level = logging.INFO)
 
 class Trained_oie:
     """
