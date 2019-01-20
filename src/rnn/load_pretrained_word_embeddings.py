@@ -12,6 +12,37 @@ sys.path.append("./common")
 from symbols import UNK_INDEX, UNK_SYMBOL, UNK_VALUE
 from keras.layers import Embedding, SpatialDropout1D
 
+from keras_bert import load_trained_model_from_checkpoint
+import codecs
+
+class BertEmb:
+    '''
+    provide the same interface as Glove
+    '''
+    def __init__(self, bert_config_path, bert_checkpoint_path, bert_dict_path):
+        logging.debug('loading bert from {} ...'.format(bert_config_path))
+        self.model = load_trained_model_from_checkpoint(
+            bert_config_path, bert_checkpoint_path)
+        self._load_vocab(bert_dict_path)
+        logging.debug('done!')
+
+    def _load_vocab(self, bert_dict_path):
+        self.word_index = {} # bert has [UNK] so we don't need define it
+        with codecs.open(bert_dict_path, 'r', 'utf8') as reader:
+            for line in reader:
+                token = line.strip()
+                self.word_index[token] = len(self.word_index)
+
+    def get_word_index(self, word, lower=True):
+        if lower:
+            word = word.lower()
+        return self.word_index[word] \
+            if (word in self.word_index) else self.word_index['[UNK]']
+
+    def get_keras_embedding(self, dropout=0, trainable=False, **kwargs):
+        # TODO: trainable is not used
+        return lambda x: SpatialDropout1D(dropout)(self.model(x))
+
 class Glove:
     """
     Stores pretrained word embeddings for GloVe, and

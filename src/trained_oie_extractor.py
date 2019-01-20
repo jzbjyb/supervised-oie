@@ -22,6 +22,8 @@ import numpy as np
 from collections import defaultdict
 
 logging.basicConfig(level = logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class Trained_oie:
     """
@@ -82,7 +84,7 @@ class Trained_oie:
         Format:
         word index, word, pred_index, label, probability
         """
-        logging.debug("Parsing: {}".format(sent))
+        logger.debug("Parsing: {}".format(sent))
         sent = self.split_words(sent)
         ret = ""
         for ((pred_ind, pred_word), labels) in self.model.predict_sentence(sent):
@@ -99,7 +101,7 @@ class Trained_oie:
         sent - a tokenized sentence
         tokenize - boolean indicating whether the sentences should be tokenized first
         """
-        logging.debug("Parsing: {}".format(sent))
+        logger.debug("Parsing: {}".format(sent))
         return self.get_extractions(self.split_words(sent))
 
     def parse_sents(self, sents):
@@ -132,7 +134,7 @@ class Extraction:
         self.prob = self.calc_prob(self.probs)
         self.pred = pred
         self.args = args
-        logging.debug(self)
+        logger.debug(self)
 
     def __str__(self):
         """
@@ -156,9 +158,9 @@ class Mock_model:
         conll_file - file from which to load the annotations
         """
         self.conll_file = conll_file
-        logging.debug("loading file {}".format(self.conll_file))
+        logger.debug("loading file {}".format(self.conll_file))
         self.dic, self.sents = self.load_annots(self.conll_file)
-        logging.debug("Done loading file")
+        logger.debug("Done loading file")
 
     def load_annots(self, conll_file):
         """
@@ -175,7 +177,7 @@ class Mock_model:
         # Iterate over lines and populate return dictionary
         for line_ind, line in enumerate(open(conll_file)):
             if not (line_ind % pow(10,5)):
-                logging.debug(line_ind)
+                logger.debug(line_ind)
             line = line.strip()
             if not line:
                 if cur_ex:
@@ -225,7 +227,7 @@ example_sent = "The Economist is an English language weekly magazine format news
 
 if __name__ == "__main__":
     args = docopt(__doc__)
-    logging.debug(args)
+    logger.debug(args)
     model_dir = args["--model"]
     input_fn = args["--in"]
     output_fn = args["--out"]
@@ -244,7 +246,7 @@ if __name__ == "__main__":
     oie = Trained_oie(model,
                       tokenize = tokenize)
 
-    logging.debug("generating output for {} sentences".format(len(sents)))
+    logger.debug("generating output for {} sentences".format(len(sents)))
 
 
     # Iterate over all raw sentences

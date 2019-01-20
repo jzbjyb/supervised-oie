@@ -22,7 +22,7 @@ from sklearn.model_selection import KFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score
-from load_pretrained_word_embeddings import Glove
+from load_pretrained_word_embeddings import Glove, BertEmb
 from operator import itemgetter
 from keras.callbacks import LambdaCallback, ModelCheckpoint
 from sklearn import metrics
@@ -31,11 +31,15 @@ from common.symbols import SPACY_POS_TAGS
 from collections import defaultdict
 from parsers.spacy_wrapper import spacy_whitespace_parser as spacy_ws
 
+from keras_bert import load_trained_model_from_checkpoint
+
 import json
 import pdb
 from keras.models import model_from_json
 import logging
 logging.basicConfig(level = logging.DEBUG)
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 class RNN_model:
     """
@@ -47,6 +51,7 @@ class RNN_model:
                  emb_dropout = 0.1, num_of_latent_layers = 2,
                  epochs = 10, pred_dropout = 0.1, model_dir = "./models/",
                  classes = None, pos_tag_embedding_size = 5,
+                 use_bert = False,
     ):
         """
         Initialize the model
@@ -78,8 +83,14 @@ class RNN_model:
         self.encoder = LabelEncoder()
         self.hidden_units = hidden_units
         self.emb_filename = emb_filename
-        self.emb = Glove(emb_filename)
-        self.embedding_size = self.emb.dim
+        if use_bert:
+            bert_root = '/home/zhengbaj/exp/bert_pretrained/uncased_L-12_H-768_A-12/'
+            self.emb = BertEmb(bert_config_path=bert_root + 'bert_config.json', 
+                bert_checkpoint_path=bert_root + 'bert_model.ckpt', 
+                bert_dict_path=bert_root + 'vocab.txt')
+        else:
+            self.emb = Glove(emb_filename)
+        #self.embedding_size = self.emb.dim
         self.trainable_emb = trainable_emb
         self.emb_dropout = emb_dropout
         self.num_of_latent_layers = num_of_latent_layers
@@ -87,6 +98,7 @@ class RNN_model:
         self.pred_dropout = pred_dropout
         self.classes = classes
         self.pos_tag_embedding_size = pos_tag_embedding_size
+        self.use_bert = use_bert
 
         np.random.seed(self.seed)
 
@@ -348,15 +360,20 @@ class RNN_model:
         # Pad / truncate to desired maximum length
         ret = defaultdict(lambda: [])
 
-        for name, sequence in zip(["word_inputs", "predicate_inputs", "postags_inputs"],
-                                  [word_inputs, pred_inputs, pos_inputs]):
+        input_titles = ["word_inputs", "predicate_inputs", "postags_inputs"]
+        input_tensors = [word_inputs, pred_inputs, pos_inputs]
+        pad_maxlen = self.sent_maxlen
+        for name, sequence in zip(input_titles, input_tensors):
             for samples in pad_sequences(sequence,
                                          pad_func = lambda : Pad_sample(),
-                                         maxlen = self.sent_maxlen):
+                                         maxlen = pad_maxlen):
                 ret[name].append([sample.encode() for sample in samples])
-
-        return {k: np.array(v) for k, v in ret.iteritems()}
-
+        input_data = {k: np.array(v) for k, v in ret.iteritems()}
+        if self.use_bert:
+            # bert has more input
+            input_data['word_segment_inputs'] = np.zeros_like(input_data['word_inputs'])
+            input_data['predicate_segment_inputs'] = np.zeros_like(input_data['predicate_inputs'])
+        return input_data
 
     def encode_outputs(self, sents):
         """
@@ -425,7 +442,6 @@ class RNN_model:
                                             trainable = self.trainable_emb,
                                             input_length = self.sent_maxlen)
 
-
     def embed_pos(self):
         """
         Embed Part of Speech using this instance params
@@ -476,14 +492,16 @@ class RNN_model:
                                                                                         weights_fn)
         weights_fn = weights_fn[0]
         logging.debug("Weights file: {}".format(weights_fn))
-        self.model = model_from_json(open(os.path.join(self.model_dir,
-                                                       "./model.json")).read())
+        #self.model = model_from_json(open(os.path.join(self.model_dir,
+        #                                               "./model.json")).read())
+        self.set_vanilla_model(dump_json=False)
+
         self.model.load_weights(weights_fn)
         self.model.compile(optimizer="adam",
                            loss='categorical_crossentropy',
                            metrics = ["accuracy"])
 
-    def set_vanilla_model(self):
+    def set_vanilla_model(self, dump_json=True):
         """
         Set a Keras model for predicting OIE as a member of this class
         Can be passed as model_fn to the constructor
@@ -505,19 +523,25 @@ class RNN_model:
         predict_layer = self.predict_classes()
 
         ## Prepare input features, and indicate how to embed them
-        inputs_and_embeddings = [(Input(shape = (self.sent_maxlen,),
-                                        dtype="int32",
-                                        name = "word_inputs"),
-                                  word_embedding_layer),
-                                 (Input(shape = (self.sent_maxlen,),
-                                        dtype="int32",
-                                        name = "predicate_inputs"),
-                                  word_embedding_layer),
-                                 (Input(shape = (self.sent_maxlen,),
-                                        dtype="int32",
-                                        name = "postags_inputs"),
-                                  pos_embedding_layer),
-        ]
+        if self.use_bert:
+            # bert takes two tensors as input: tokens and segment
+            inputs_and_embeddings = \
+                [([Input(shape=(self.sent_maxlen,), dtype="int32", name="word_inputs"),
+                   Input(shape=(self.sent_maxlen,), dtype="int32", name="word_segment_inputs")],
+                word_embedding_layer),
+                ([Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_inputs"),
+                   Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_segment_inputs")],
+                word_embedding_layer)]
+        else:
+            inputs_and_embeddings = \
+                [(Input(shape=(self.sent_maxlen,), dtype="int32", name="word_inputs"),
+                word_embedding_layer),
+                (Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_inputs"), 
+                word_embedding_layer)]
+        inputs_and_embeddings.append(
+            (Input(shape=(self.sent_maxlen,), dtype="int32", name = "postags_inputs"),
+            pos_embedding_layer))
+
 
         ## Concat all inputs and run on deep network
         #output = predict_layer(dropout(latent_layers(merge([embed(inp)
@@ -529,17 +553,23 @@ class RNN_model:
                                                            axis = -1))))
 
         # Build model
-        self.model = Model(input = map(itemgetter(0), inputs_and_embeddings),
+        model_input = []
+        for inps, embed in inputs_and_embeddings:
+            if type(inps) is not list:
+                inps = [inps]
+            for inp in inps:
+                model_input.append(inp)
+        self.model = Model(input = model_input,
                            output = [output])
 
         # Loss
         self.model.compile(optimizer='adam',
                            loss='categorical_crossentropy',
                            metrics=['categorical_accuracy'])
-        self.model.summary()
-
-        # Save model json to file
-        self.save_model_to_file(os.path.join(self.model_dir, "model.json"))
+        if dump_json:
+            self.model.summary()
+            # Save model json to file
+            self.save_model_to_file(os.path.join(self.model_dir, "model.json"))
 
     def to_json(self):
         """
@@ -559,13 +589,18 @@ class RNN_model:
             "pred_dropout": self.pred_dropout,
             "emb_filename": self.emb_filename,
             "pos_tag_embedding_size": self.pos_tag_embedding_size,
+            "use_bert": self.use_bert,
         }
 
     def save_model_to_file(self, fn):
         """
         Saves this model to file, also encodes class inits in the model's json
         """
-        js = json.loads(self.model.to_json())
+        try:
+            js = json.loads(self.model.to_json())
+        except:
+            logging.debug('keras to_json bug, only save hyperparams')
+            js = {}
 
         # Add this model's params
         js["rnn"] = self.to_json()
@@ -690,6 +725,7 @@ if __name__ == "__main__":
                           "trainable_emb": True,
                           "batch_size": 50,
                           "emb_filename": "../pretrained_word_embeddings/glove.6B.50d.txt",
+                          "use_bert": False,
             }
 
 
