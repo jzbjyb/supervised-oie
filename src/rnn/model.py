@@ -158,6 +158,11 @@ class RNN_model:
         """
         X_train, Y_train = self.load_dataset(train_fn)
         X_dev, Y_dev = self.load_dataset(dev_fn)
+        logging.debug('UNK appears {} times out of {} ({}%)'.format(
+            self.emb.unk_count, self.emb.total_count, 
+            self.emb.unk_count * 100 / (self.emb.total_count + 1e-5)))
+        top_unk_words = sorted(self.emb.unk_words.items(), key=lambda x: -x[1])[:10]
+        logging.debug('totally {} UNK words: {}'.format(len(self.emb.unk_words), top_unk_words))
         logging.debug("Classes: {}".format((self.num_of_classes(), self.classes_())))
         # Set model params, called here after labels have been identified in load dataset
         self.model_fn()
@@ -327,17 +332,21 @@ class RNN_model:
 
         fixed_size_sents = self.get_fixed_size(sents)
 
-
         for sent in fixed_size_sents:
 
             assert(len(set(sent.run_id.values)) == 1)
 
             word_indices = sent.index.values
             sent_words = sent.word.values
+            # must lowercase all the words before mapping to int because of
+            # the special symbols in bert
+            sent_words = np.array([w.lower() for w in sent_words])
+
+            if self.use_bert:
+                sent_words = np.insert(sent_words, 0, '[CLS]')
+                sent_words = np.append(sent_words, '[SEP]')
 
             sent_str = " ".join(sent_words)
-
-
 
             pos_tags_encodings = [(SPACY_POS_TAGS.index(word_id_to_pos[word_ind]) \
                                    if word_id_to_pos[word_ind] in SPACY_POS_TAGS \
@@ -345,7 +354,7 @@ class RNN_model:
                                   for word_ind
                                   in word_indices]
 
-            word_encodings = [self.emb.get_word_index(w)
+            word_encodings = [self.emb.get_word_index(w, lower=False)
                               for w in sent_words]
 
             # Same pred word encodings for all words in the sentence
@@ -362,11 +371,14 @@ class RNN_model:
 
         input_titles = ["word_inputs", "predicate_inputs", "postags_inputs"]
         input_tensors = [word_inputs, pred_inputs, pos_inputs]
-        pad_maxlen = self.sent_maxlen
-        for name, sequence in zip(input_titles, input_tensors):
+        if self.use_bert:
+            input_pad_lens = [self.sent_maxlen+2, self.sent_maxlen+2, self.sent_maxlen]
+        else:
+            input_pad_lens = [self.sent_maxlen, self.sent_maxlen, self.sent_maxlen]
+        for name, sequence, pad_len in zip(input_titles, input_tensors, input_pad_lens):
             for samples in pad_sequences(sequence,
                                          pad_func = lambda : Pad_sample(),
-                                         maxlen = pad_maxlen):
+                                         maxlen = pad_len):
                 ret[name].append([sample.encode() for sample in samples])
         input_data = {k: np.array(v) for k, v in ret.iteritems()}
         if self.use_bert:
@@ -526,11 +538,11 @@ class RNN_model:
         if self.use_bert:
             # bert takes two tensors as input: tokens and segment
             inputs_and_embeddings = \
-                [([Input(shape=(self.sent_maxlen,), dtype="int32", name="word_inputs"),
-                   Input(shape=(self.sent_maxlen,), dtype="int32", name="word_segment_inputs")],
+                [([Input(shape=(self.sent_maxlen+2,), dtype="int32", name="word_inputs"),
+                   Input(shape=(self.sent_maxlen+2,), dtype="int32", name="word_segment_inputs")],
                 word_embedding_layer),
-                ([Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_inputs"),
-                   Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_segment_inputs")],
+                ([Input(shape=(self.sent_maxlen+2,), dtype="int32", name="predicate_inputs"),
+                   Input(shape=(self.sent_maxlen+2,), dtype="int32", name="predicate_segment_inputs")],
                 word_embedding_layer)]
         else:
             inputs_and_embeddings = \

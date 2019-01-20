@@ -10,7 +10,7 @@ logging.basicConfig(level = logging.DEBUG)
 import sys
 sys.path.append("./common")
 from symbols import UNK_INDEX, UNK_SYMBOL, UNK_VALUE
-from keras.layers import Embedding, SpatialDropout1D
+from keras.layers import Embedding, SpatialDropout1D, Lambda
 
 from keras_bert import load_trained_model_from_checkpoint
 import codecs
@@ -20,11 +20,16 @@ class BertEmb:
     provide the same interface as Glove
     '''
     def __init__(self, bert_config_path, bert_checkpoint_path, bert_dict_path):
+        self.bert_config_path = bert_config_path
+        self.bert_checkpoint_path = bert_checkpoint_path
         logging.debug('loading bert from {} ...'.format(bert_config_path))
         self.model = load_trained_model_from_checkpoint(
             bert_config_path, bert_checkpoint_path)
         self._load_vocab(bert_dict_path)
         logging.debug('done!')
+        self.unk_count = 0
+        self.total_count = 0
+        self.unk_words = {} # word -> count
 
     def _load_vocab(self, bert_dict_path):
         self.word_index = {} # bert has [UNK] so we don't need define it
@@ -36,12 +41,34 @@ class BertEmb:
     def get_word_index(self, word, lower=True):
         if lower:
             word = word.lower()
+        if word not in self.word_index:
+            self.unk_count += 1
+            if word not in self.unk_words:
+                self.unk_words[word] = 0
+            self.unk_words[word] += 1
+        self.total_count += 1
         return self.word_index[word] \
             if (word in self.word_index) else self.word_index['[UNK]']
 
     def get_keras_embedding(self, dropout=0, trainable=False, **kwargs):
         # TODO: trainable is not used
-        return lambda x: SpatialDropout1D(dropout)(self.model(x))
+        def crop(dimension, start, end):
+            # Crops (or slices) a Tensor on a given dimension from start to end
+            # example : to crop tensor x[:, :, 5:10]
+            # call slice(2, 5, 10) as you want to crop on the second dimension
+            def func(x):
+                if dimension == 0:
+                    return x[start: end]
+                if dimension == 1:
+                    return x[:, start: end]
+                if dimension == 2:
+                    return x[:, :, start: end]
+                if dimension == 3:
+                    return x[:, :, :, start: end]
+                if dimension == 4:
+                    return x[:, :, :, :, start: end]
+            return Lambda(func)
+        return lambda x: SpatialDropout1D(dropout)(crop(1, 1, -1)(self.model(x)))
 
 class Glove:
     """
@@ -60,6 +87,9 @@ class Glove:
         logging.debug("Loading GloVe embeddings from: {} ...".format(self.fn))
         self._load(self.fn)
         logging.debug("Done!")
+        self.unk_count = 0
+        self.total_count = 0
+        self.unk_words = {} # word -> count
 
     def _load(self, fn):
         """
@@ -93,6 +123,12 @@ class Glove:
         """
         if lower:
             word = word.lower()
+        if word not in self.word_index:
+            self.unk_count += 1
+            if word not in self.unk_words:
+                self.unk_words[word] = 0
+            self.unk_words[word] += 1
+        self.total_count += 1
         return self.word_index[word] \
             if (word in self.word_index) else UNK_INDEX
 
