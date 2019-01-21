@@ -10,10 +10,12 @@ logging.basicConfig(level = logging.DEBUG)
 import sys
 sys.path.append("./common")
 from symbols import UNK_INDEX, UNK_SYMBOL, UNK_VALUE
-from keras.layers import Embedding, SpatialDropout1D, Lambda
+from keras.layers import Embedding, SpatialDropout1D, Lambda, Multiply, RepeatVector, Reshape
+from keras import backend as K
 
 from keras_bert import load_trained_model_from_checkpoint
 import codecs
+import tokenization as bert_tokenization
 
 class BertEmb:
     '''
@@ -27,6 +29,8 @@ class BertEmb:
             bert_config_path, bert_checkpoint_path)
         self._load_vocab(bert_dict_path)
         logging.debug('done!')
+        self.tokenizer = bert_tokenization.FullTokenizer(
+            vocab_file=bert_dict_path, do_lower_case=True)
         self.unk_count = 0
         self.total_count = 0
         self.unk_words = {} # word -> count
@@ -37,6 +41,19 @@ class BertEmb:
             for line in reader:
                 token = line.strip()
                 self.word_index[token] = len(self.word_index)
+
+    def tokenize(self, tokens):
+        '''
+        tokenize token sequence using bert tokenizer
+        '''
+        bert_tokens = []
+        bert_mask = [] # the last token of the original token is 1, others are 0
+        for orig_token in tokens:
+            new_tokens = self.tokenizer.tokenize(orig_token)
+            bert_tokens.extend(new_tokens)
+            bert_mask.extend([0] * (len(new_tokens) - 1))
+            bert_mask.append(1)
+        return bert_tokens, bert_mask
 
     def get_word_index(self, word, lower=True):
         if lower:
@@ -68,7 +85,24 @@ class BertEmb:
                 if dimension == 4:
                     return x[:, :, :, :, start: end]
             return Lambda(func)
-        return lambda x: SpatialDropout1D(dropout)(crop(1, 1, -1)(self.model(x)))
+        def emb(x):
+            self.bert_output = crop(1, 1, -1)(self.model(x))
+            return SpatialDropout1D(dropout)(self.bert_output)
+        return emb
+        #return lambda x: SpatialDropout1D(dropout)(crop(1, 1, -1)(self.model(x)))
+
+    def get_transformed_embedding(self, input_length, dropout=0):
+        def emb(x):
+            if not hasattr(self, 'bert_output'):
+                raise Exception('must run bert first')
+            cast_to_float32 = Lambda(lambda x: K.cast(x, 'float32'))
+            x = Multiply()([self.bert_output, cast_to_float32(Reshape((20, 1), input_shape=(20,))(x))])
+            mean_layer = Lambda(lambda x: K.mean(x, axis=1), output_shape=lambda in_shape: (in_shape[0],) + in_shape[2:])
+            x = mean_layer(x)
+            x = RepeatVector(input_length)(x)
+            x = SpatialDropout1D(dropout)(x)
+            return x
+        return emb
 
 class Glove:
     """
@@ -114,6 +148,10 @@ class Glove:
         self.emb = np.array([UNK_VALUE(self.dim)] + emb)
         # Set the vobabulary size
         self.vocab_size = len(self.emb)
+
+    def tokenize(self, tokens):
+        mask = [1] * len(tokens)
+        return tokens, mask
 
     def get_word_index(self, word, lower = True):
         """

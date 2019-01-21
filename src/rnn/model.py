@@ -173,6 +173,7 @@ class RNN_model:
                        batch_size = self.batch_size,
                        epochs = self.epochs,
                        validation_data = (X_dev, Y_dev),
+                       sample_weight=X_train['mask_inputs'],
                        callbacks = self.get_callbacks(X_train))
 
     @staticmethod
@@ -211,13 +212,22 @@ class RNN_model:
         # Run RNN for each predicate on this sentence
         for ind, pred in preds:
             cur_sample = self.create_sample(sent, ind)
-            X = self.encode_inputs([cur_sample])
+            X = self.encode_inputs([cur_sample], get_output=False)
+            results = self.transform_output_probs(self.model.predict(X), get_prob=True).reshape(-1, 2)
+            mask = X['mask_inputs'].flatten()
+            assert len(results) == len(mask), 'predication results not in the same shape as mask'
+            results = zip(results, mask) # use mask to get the label (no truncation needed)
+            ret.append(((ind, pred),
+                        [(self.consolidate_label(label), float(prob))
+                         for ((label, prob), mask_label) in results if mask_label == 1]))
+            '''
             ret.append(((ind, pred),
                         [(self.consolidate_label(label), float(prob))
                          for (label, prob) in
                          self.transform_output_probs(self.model.predict(X),           # "flatten" and truncate
                                                      get_prob = True).reshape(num_of_samples,
                                                                               2)[:len(sent)]]))
+            '''
         return ret
 
     def create_sample(self, sent, head_pred_id):
@@ -271,8 +281,8 @@ class RNN_model:
         # Split according to sentences and encode
         sents = self.get_sents_from_df(df)
         logging.info("{} has {} sentences".format(fn, len(sents)))
-        return (self.encode_inputs(sents),
-                self.encode_outputs(sents))
+        X, Y = self.encode_inputs(sents, get_output=True)
+        return (X, Y)
 
     def get_sents_from_df(self, df):
         """
@@ -302,7 +312,17 @@ class RNN_model:
             if pred_ind != -1 \
                else full_sent.pred.values[0].split(" ")[0]
 
-    def encode_inputs(self, sents):
+    def get_head_pred_word_pos(self, full_sent):
+        pred_ind = full_sent.head_pred_id.values[0]
+        if pred_ind != -1:
+            return pred_ind
+        pred_head_word = full_sent.pred.values[0].split(' ')[0]
+        for i, word in enumerate(full_sent.word.values):
+            if word == pred_head_word:
+                return i
+        raise Exception('can\'t find predicate haed')
+
+    def encode_inputs(self, sents, get_output=False):
         """
         Given a dataframe which is already split to sentences,
         encode inputs for rnn classification.
@@ -311,6 +331,8 @@ class RNN_model:
         word_inputs = []
         pred_inputs = []
         pos_inputs = []
+        mask_inputs = []
+        label_outputs = []
 
         # Preproc to get all preds per run_id
         # Sanity check - make sure that all sents agree on run_id
@@ -322,16 +344,109 @@ class RNN_model:
 
         # Construct a mapping from running word index to pos
         word_id_to_pos = {}
-        for sent in sents:
-            indices = sent.index.values
-            words = sent.word.values
 
+        # convert dataframe to list and tokenize sentence
+        sent_word_list = []
+        sent_pos_list = []
+        sent_label_list = []
+        sent_pred_list = []
+        sent_mask_list = []
+        sent_runid_list = []
+        for sent in sents:
+            indices = sent.index.values.tolist()
+            words = sent.word.values.tolist()
+            if get_output:
+                labels = self.transform_labels(sent.label.values.tolist())
+            else:
+                labels = [0] * len(words) # fake labels
+            preds = [0] * len(words)
+            preds[self.get_head_pred_word_pos(sent)] = 1
+            # get pos
             for index, word in zip(indices,
                                    spacy_ws(" ".join(words))):
                 word_id_to_pos[index] = word.tag_
+            poss = [word_id_to_pos[index] for index in indices] # poss has the same length as words
+            # tokenize (mainly for bert with use sub words)
+            new_words, mask = self.emb.tokenize(words)
+            # convert poss
+            new_poss, new_labels, new_preds = [], [], []
+            for pos_tag, lab, pr in zip(poss, labels, preds):
+                si = len(new_poss)
+                while mask[si] != 1:
+                    si += 1
+                    new_poss.append(pos_tag)
+                    new_labels.append(lab)
+                    new_preds.append(pr)
+                new_poss.append(pos_tag)
+                new_labels.append(lab)
+                new_preds.append(pr)
+            # store all lists
+            sent_word_list.append(new_words)
+            sent_pos_list.append(new_poss)
+            sent_label_list.append(new_labels)
+            sent_pred_list.append(new_preds)
+            sent_mask_list.append(mask)
+            sent_runid_list.append([sent.run_id.values[0]] * len(mask))
 
-        fixed_size_sents = self.get_fixed_size(sents)
+        #fixed_size_sents = self.get_fixed_size(sents)
+        fixed_size_sent_word_list = self.get_fixed_size(sent_word_list)
+        fixed_size_sent_pos_list = self.get_fixed_size(sent_pos_list)
+        fixed_size_sent_label_list = self.get_fixed_size(sent_label_list)
+        fixed_size_sent_pred_list = self.get_fixed_size(sent_pred_list)
+        fixed_size_sent_mask_list = self.get_fixed_size(sent_mask_list)
+        fixed_size_sent_runid_list = self.get_fixed_size(sent_runid_list)
 
+        for sent_word, sent_pos, sent_label, sent_pred, sent_mask, sent_runid in zip(
+            fixed_size_sent_word_list, fixed_size_sent_pos_list, 
+            fixed_size_sent_label_list, fixed_size_sent_pred_list,
+            fixed_size_sent_mask_list, fixed_size_sent_runid_list):
+            if self.use_bert:
+                # add special symbol
+                sent_word.insert(0, '[CLS]')
+                sent_word.append('[SEP]') 
+            pos_tags_encodings = \
+                [SPACY_POS_TAGS.index(pt) if pt in SPACY_POS_TAGS else 0 for pt in sent_pos]
+            word_encodings = [self.emb.get_word_index(w, lower=False) for w in sent_word]
+            if self.use_bert:
+                # in bert, the embedding of predicate should be selected from the output of bert
+                # so we feed the mask as input for selection purpose
+                pred_word_encodings = [pr for pr in sent_pred]
+            else:
+                pred_word = run_id_to_pred[int(sent_runid[0])]
+                pred_word_encodings = [self.emb.get_word_index(pred_word) for _ in sent_word]
+
+            word_inputs.append([Sample(w) for w in word_encodings])
+            pred_inputs.append([Sample(w) for w in pred_word_encodings])
+            pos_inputs.append([Sample(pos) for pos in pos_tags_encodings])
+            mask_inputs.append([Sample(m) for m in sent_mask])
+            label_outputs.append(list(np_utils.to_categorical(sent_label, num_classes=self.num_of_classes())))
+
+        # Pad / truncate to desired maximum length
+        ret = defaultdict(lambda: [])
+
+        input_titles = ["word_inputs", "predicate_inputs", "postags_inputs", "mask_inputs"]
+        input_tensors = [word_inputs, pred_inputs, pos_inputs, mask_inputs]
+        if self.use_bert:
+            input_pad_lens = [self.sent_maxlen+2, self.sent_maxlen, self.sent_maxlen, self.sent_maxlen]
+        else:
+            input_pad_lens = [self.sent_maxlen, self.sent_maxlen, self.sent_maxlen, self.sent_maxlen]
+        for name, sequence, pad_len in zip(input_titles, input_tensors, input_pad_lens):
+            for samples in pad_sequences(sequence,
+                                         pad_func = lambda : Pad_sample(),
+                                         maxlen = pad_len):
+                ret[name].append([sample.encode() for sample in samples])
+        input_data = {k: np.array(v) for k, v in ret.iteritems()}
+        if self.use_bert:
+            # bert has more input
+            input_data['word_segment_inputs'] = np.zeros_like(input_data['word_inputs'])
+        if not get_output:
+            return input_data
+        output_data = np.ndarray(shape=(len(label_outputs), self.sent_maxlen, self.num_of_classes()),
+            buffer = np.array(pad_sequences(
+                label_outputs, lambda : np.zeros(self.num_of_classes()), maxlen = self.sent_maxlen)))
+        return input_data, output_data
+
+        '''
         for sent in fixed_size_sents:
 
             assert(len(set(sent.run_id.values)) == 1)
@@ -386,6 +501,7 @@ class RNN_model:
             input_data['word_segment_inputs'] = np.zeros_like(input_data['word_inputs'])
             input_data['predicate_segment_inputs'] = np.zeros_like(input_data['predicate_inputs'])
         return input_data
+        '''
 
     def encode_outputs(self, sents):
         """
@@ -523,6 +639,13 @@ class RNN_model:
 
         ## Embedding Layer
         word_embedding_layer = self.embed_word()
+        if self.use_bert:
+            # the embedding of predicate should come from bert's output
+            predicate_embedding_layer = \
+                self.emb.get_transformed_embedding(
+                    input_length=self.sent_maxlen, dropout=self.emb_dropout)
+        else:
+            predicate_embedding_layer = word_embedding_layer
         pos_embedding_layer = self.embed_pos()
 
         ## Deep layers
@@ -536,48 +659,41 @@ class RNN_model:
 
         ## Prepare input features, and indicate how to embed them
         if self.use_bert:
-            # bert takes two tensors as input: tokens and segment
             inputs_and_embeddings = \
                 [([Input(shape=(self.sent_maxlen+2,), dtype="int32", name="word_inputs"),
                    Input(shape=(self.sent_maxlen+2,), dtype="int32", name="word_segment_inputs")],
                 word_embedding_layer),
-                ([Input(shape=(self.sent_maxlen+2,), dtype="int32", name="predicate_inputs"),
-                   Input(shape=(self.sent_maxlen+2,), dtype="int32", name="predicate_segment_inputs")],
-                word_embedding_layer)]
+                (Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_inputs"),
+                predicate_embedding_layer)]
         else:
             inputs_and_embeddings = \
                 [(Input(shape=(self.sent_maxlen,), dtype="int32", name="word_inputs"),
                 word_embedding_layer),
                 (Input(shape=(self.sent_maxlen,), dtype="int32", name="predicate_inputs"), 
-                word_embedding_layer)]
+                predicate_embedding_layer)]
         inputs_and_embeddings.append(
             (Input(shape=(self.sent_maxlen,), dtype="int32", name = "postags_inputs"),
             pos_embedding_layer))
-
+        lstm_inputs = [embed(inp) for inp, embed in inputs_and_embeddings]
 
         ## Concat all inputs and run on deep network
-        #output = predict_layer(dropout(latent_layers(merge([embed(inp)
-        #                                                    for inp, embed in inputs_and_embeddings],
-        #                                                   mode = "concat",
-        #                                                   concat_axis = -1))))
-        output = predict_layer(dropout(latent_layers(concatenate([embed(inp)
-                                                            for inp, embed in inputs_and_embeddings],
-                                                           axis = -1))))
+        output = predict_layer(dropout(latent_layers(concatenate(lstm_inputs, axis=-1))))
 
         # Build model
         model_input = []
         for inps, embed in inputs_and_embeddings:
             if type(inps) is not list:
                 inps = [inps]
-            for inp in inps:
-                model_input.append(inp)
-        self.model = Model(input = model_input,
-                           output = [output])
+            model_input.extend(inps)
+        self.model = Model(input = model_input, output = [output])
 
         # Loss
         self.model.compile(optimizer='adam',
                            loss='categorical_crossentropy',
+                           sample_weight_mode='temporal',
                            metrics=['categorical_accuracy'])
+
+        ## Dump model
         if dump_json:
             self.model.summary()
             # Save model json to file
