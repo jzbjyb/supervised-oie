@@ -41,6 +41,21 @@ logging.basicConfig(level = logging.DEBUG)
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
+'''
+import tensorflow as tf
+from keras.backend.tensorflow_backend import set_session
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+sess = tf.Session(config=config)
+set_session(sess)
+
+from tensorflow import set_random_seed
+import random
+random.seed(2019)
+np.random.seed(2019)
+set_random_seed(2019)
+'''
+
 class RNN_model:
     """
     Represents an RNN model for supervised OIE

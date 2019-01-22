@@ -60,6 +60,7 @@ class Trained_oie:
             probs = []
 
             # collect args
+            assert len(labels) == len(sent), '#labels should be equal to #tokens in the sentence'
             for (label, prob), word in zip(labels, sent):
                 if label.startswith("A"):
                     cur_arg.append(word)

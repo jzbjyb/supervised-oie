@@ -96,11 +96,11 @@ class BertEmb:
             if not hasattr(self, 'bert_output'):
                 raise Exception('must run bert first')
             cast_to_float32 = Lambda(lambda x: K.cast(x, 'float32'))
-            x = Multiply()([self.bert_output, cast_to_float32(Reshape((20, 1), input_shape=(20,))(x))])
+            x = Multiply()([self.bert_output, cast_to_float32(Reshape((input_length, 1), input_shape=(input_length,))(x))])
             mean_layer = Lambda(lambda x: K.mean(x, axis=1), output_shape=lambda in_shape: (in_shape[0],) + in_shape[2:])
             x = mean_layer(x)
             x = RepeatVector(input_length)(x)
-            x = SpatialDropout1D(dropout)(x)
+            #x = SpatialDropout1D(dropout)(x)
             return x
         return emb
 
@@ -151,7 +151,8 @@ class Glove:
 
     def tokenize(self, tokens):
         mask = [1] * len(tokens)
-        return tokens, mask
+        new_tokens = [token.lower() for token in tokens]
+        return new_tokens, mask
 
     def get_word_index(self, word, lower = True):
         """
