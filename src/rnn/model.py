@@ -39,7 +39,7 @@ from keras.models import model_from_json
 import logging
 logging.basicConfig(level = logging.DEBUG)
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 '''
 import tensorflow as tf
@@ -635,13 +635,18 @@ class RNN_model:
                                                                                         weights_fn)
         weights_fn = weights_fn[0]
         logging.debug("Weights file: {}".format(weights_fn))
-        #self.model = model_from_json(open(os.path.join(self.model_dir,
-        #                                               "./model.json")).read())
-        self.set_vanilla_model(dump_json=False)
+        try:
+            logging.debug('use json file to build model')
+            self.model = model_from_json(open(os.path.join(self.model_dir,
+                                                       "./model.json")).read())
+        except:
+            logging.debug('use function to build model')
+            self.set_vanilla_model(dump_json=False)
 
         self.model.load_weights(weights_fn)
         self.model.compile(optimizer="adam",
                            loss='categorical_crossentropy',
+                           sample_weight_mode='temporal',
                            metrics = ["accuracy"])
 
     def set_vanilla_model(self, dump_json=True):
@@ -884,6 +889,7 @@ if __name__ == "__main__":
         rnn = RNN_model(model_fn = RNN_model.set_vanilla_model,
                         model_dir = model_dir,
                         **rnn_params)
+        #rnn = load_pretrained_rnn('../models/rnnoie_aw')
         rnn.train(train_fn, dev_fn)
 
     elif args["--pretrained"] is not None:
