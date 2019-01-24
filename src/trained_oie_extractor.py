@@ -1,5 +1,8 @@
 """ Usage:
-trained_oie_extractor [--model=MODEL_DIR] --in=INPUT_FILE --out=OUTPUT_FILE [--tokenize] [--conll]
+trained_oie_extractor [--model=MODEL_DIR] --in=INPUT_FILE --out=OUTPUT_FILE [--tokenize] [--conll] [--beam=BEAM]
+
+Options:
+    --beam=BEAM  Beam search size [default: 1].
 
 Run a trined OIE model on raw sentences.
 
@@ -47,23 +50,23 @@ class Trained_oie:
             else re.split(r' +', sent) # Allow arbitrary number of spaces
 
 
-    def get_extractions(self, sent):
+    def get_extractions(self, sent, beam=1):
         """
         Returns a list of OIE extractions for a given sentence
         sent - a list of tokens
         """
         ret = []
 
-        for ((pred_ind, pred_word), labels) in self.model.predict_sentence(sent):
+        for ((pred_ind, pred_word), labels) in self.model.predict_sentence_beamsearch(sent, k=beam):
             cur_args = []
             cur_arg = []
             probs = []
 
             # collect args
             assert len(labels) == len(sent), '#labels should be equal to #tokens in the sentence'
-            for (label, prob), word in zip(labels, sent):
+            for i, ((label, prob), word) in enumerate(zip(labels, sent)):
                 if label.startswith("A"):
-                    cur_arg.append(word)
+                    cur_arg.append((word, i))
                     probs.append(prob)
 
                 elif cur_arg:
@@ -73,7 +76,7 @@ class Trained_oie:
             # Create extraction
             if cur_args:
                 ret.append(Extraction(sent,
-                                      pred_word,
+                                      (pred_word, pred_ind),
                                       cur_args,
                                       probs,
                                       calc_prob=lambda probs: reduce(lambda x, y: x * y, probs) + 0.001,
@@ -97,14 +100,14 @@ class Trained_oie:
             ret += '\n'
         return ret
 
-    def parse_sent(self, sent):
+    def parse_sent(self, sent, beam=1):
         """
         Returns a list of extractions for the given sentence
         sent - a tokenized sentence
         tokenize - boolean indicating whether the sentences should be tokenized first
         """
         logger.debug("Parsing: {}".format(sent))
-        return self.get_extractions(self.split_words(sent))
+        return self.get_extractions(self.split_words(sent), beam=beam)
 
     def parse_sents(self, sents):
         """
@@ -124,7 +127,7 @@ class Extraction:
         """
         sent - Tokenized sentence - list of strings
         pred - Predicate word
-        args - List of arguments (each a string)
+        args - List of arguments (each a tuple <string, position (zero based)>)
         probs - list of float in [0,1] indicating the probability
                of each of the items in the extraction
         calc_prob - function which takes a list of probabilities for each of the
@@ -138,7 +141,7 @@ class Extraction:
         self.args = args
         logger.debug(self)
 
-    def __str__(self):
+    def __old_str__(self):
         """
         Format (tab separated):
         Sent, prob, pred, arg1, arg2, ...
@@ -149,6 +152,17 @@ class Extraction:
                               self.pred,
                               '\t'.join([' '.join(arg)
                                          for arg in self.args])]))
+    def __str__(self):
+        '''
+        store both the word string and the start position in the original sentence.
+        '''
+        return '\t'.join(map(str,
+                             [' '.join(self.sent),
+                              self.prob,
+                              '{}##{}'.format(*self.pred),
+                              '\t'.join([' '.join(map(lambda x: x[0], arg)) + '##' + str(list(map(lambda x: x[1], arg))[0])
+                                         for arg in self.args])]))
+
 class Mock_model:
     """
     Load a conll file annotated with labels And probabilities
@@ -234,6 +248,7 @@ if __name__ == "__main__":
     input_fn = args["--in"]
     output_fn = args["--out"]
     tokenize = args["--tokenize"]
+    beam = int(args['--beam'])
 
     if model_dir:
         # If model dir is given, use it to load the model
@@ -261,5 +276,5 @@ if __name__ == "__main__":
         with open(output_fn, 'w') as fout:
             fout.write('\n'.join([str(ex)
                                   for sent in sents
-                                  for ex in oie.parse_sent(sent.strip())
+                                  for ex in oie.parse_sent(sent.strip(), beam=beam)
             ]))

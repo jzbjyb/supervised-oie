@@ -12,11 +12,13 @@ class Extraction:
     """
     Stores sentence, single predicate and corresponding arguments.
     """
-    def __init__(self, pred, head_pred_index, sent, confidence, heads=None, question_dist = '', index = -1):
+    def __init__(self, pred, head_pred_index, sent, confidence, heads=None, question_dist = '', index = -1, pred_pos=None):
         self.pred = pred
+        self.pred_pos = pred_pos
         self.head_pred_index = head_pred_index
         self.sent = sent
         self.args = []
+        self.args_pos = [] # start position of each arg (zero based)
         self.confidence = confidence
         self.heads = heads
         self.matched = []
@@ -40,8 +42,9 @@ class Extraction:
     def argsByDistFromPred(self, question):
         return sorted(self.questions[question], key = lambda arg: self.distArgFromPred(arg))
 
-    def addArg(self, arg, question = None):
+    def addArg(self, arg, arg_pos=None, question = None):
         self.args.append(arg)
+        self.args_pos.append(arg_pos)
         if question:
             self.questions[question] = self.questions.get(question,[]) + [Argument(arg)]
 

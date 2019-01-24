@@ -33,8 +33,12 @@ class TabReader(OieReader):
                     continue
                 data = line.strip().split('\t')
                 text, confidence, rel = data[:3]
-                curExtraction = Extraction(pred = rel,
-                                           head_pred_index = None,
+                rel = rel.split('##')
+                pred_pos = int(rel[1]) if len(rel) == 2 else None
+                rel = rel[0]
+                curExtraction = Extraction(pred=rel,
+                                           pred_pos=pred_pos,
+                                           head_pred_index=None,
                                            sent = text,
                                            confidence = float(confidence),
                                            question_dist = "./question_distributions/dist_wh_sbj_obj1.json",
@@ -42,7 +46,10 @@ class TabReader(OieReader):
                 ex_index += 1
 
                 for arg in data[3:]:
-                    curExtraction.addArg(arg)
+                    arg = arg.split('##')
+                    arg_pos = int(arg[1]) if len(arg) == 2 else None
+                    arg = arg[0]
+                    curExtraction.addArg(arg, arg_pos)
 
                 d[text] = d.get(text, []) + [curExtraction]
         self.oie = d

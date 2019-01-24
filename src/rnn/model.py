@@ -32,6 +32,7 @@ from collections import defaultdict
 from parsers.spacy_wrapper import spacy_whitespace_parser as spacy_ws
 
 from keras_bert import load_trained_model_from_checkpoint
+from beam_search import TaggingPredict, beamsearch
 
 import json
 import pdb
@@ -205,6 +206,35 @@ class RNN_model:
         """
         return label.split("-")[0] if label.startswith("O") else label
 
+    def predict_sentence_beamsearch(self, sent, k=1):
+        '''
+        k is the number of extractions generated for each predicate
+        '''
+        ret = []
+        sent_str = " ".join(sent)
+
+        # Extract predicates by looking at verbal POS
+        preds = [(word.i, str(word))
+                 for word
+                 in spacy_ws(sent_str)
+                 if word.tag_.startswith("V")]
+
+        classes = self.classes_()
+
+        for ind, pred in preds:
+            cur_sample = self.create_sample(sent, ind)
+            X = self.encode_inputs([cur_sample], get_output=False)
+            predict_prob = self.model.predict(X)
+            predict_prob = predict_prob.reshape(-1, predict_prob.shape[-1])
+            mask = X['mask_inputs'].flatten()
+            assert len(predict_prob) == len(mask), 'predication results not in the same shape as mask'
+            predict_prob = np.array([p for p,m in zip(predict_prob, mask) if m == 1])
+            tp = TaggingPredict(predict_prob)
+            samples, scores = beamsearch(tp, k=k)
+            for sample, score in zip(samples, scores):
+                ret.append(((ind, pred),
+                            [(self.consolidate_label(classes[label]), prob) for label, prob in sample]))
+        return ret
 
     def predict_sentence(self, sent):
         """
