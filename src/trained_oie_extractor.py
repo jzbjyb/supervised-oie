@@ -75,7 +75,8 @@ class Trained_oie:
                 ret.append(Extraction(sent,
                                       pred_word,
                                       cur_args,
-                                      probs
+                                      probs,
+                                      calc_prob=lambda probs: reduce(lambda x, y: x * y, probs) + 0.001,
                                   ))
         return ret
 

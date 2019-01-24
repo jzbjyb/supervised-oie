@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -261,7 +261,8 @@ class Benchmark:
         self.extraction_showcase(cases, use_gold=False)
 
 
-    def compare(self, predicted, tag, matchingFunc, output_fn, error_file = None, num_args=None):
+    def compare(self, predicted, tag, matchingFunc, output_fn, error_file = None, num_args=None, 
+        perfect_confidence=False):
         ''' Compare gold against predicted using a specified matching function.
             Outputs PR curve to output_fn '''
 
@@ -311,7 +312,7 @@ class Benchmark:
                                     ignoreCase = True)
                     if match_bool:
                         y_true.append(1)
-                        y_scores.append(predictedEx.confidence)
+                        y_scores.append(1 if perfect_confidence else predictedEx.confidence)
                         predictedEx.matched.append(match_score)
                         goldEx.aligned[tag] = predictedEx # save alignment results
                         found = True
@@ -337,7 +338,7 @@ class Benchmark:
             for predictedEx in [x for x in predictedExtractions if len(x.matched) == 0 and len(x.unmatched) != 0]:
                 # Add false positives
                 y_true.append(0)
-                y_scores.append(predictedEx.confidence)
+                y_scores.append(0 if perfect_confidence else predictedEx.confidence)
 
         y_true = y_true
         y_scores = y_scores
@@ -503,12 +504,16 @@ if __name__ == '__main__':
     b = Benchmark(args['--gold'])
     out_filename = args['--out']
 
+    num_args = None
+    if args['--num_args']:
+        num_args = set(map(int, args['--num_args'].split(':')))
     logging.info("Writing PR curve of {} to {}".format(predicted_list[0].name, out_filename))
     compared_predicated1 = b.compare(predicted = predicted_list[0].oie, tag='sys1',
               matchingFunc = matchingFunc,
               output_fn = out_filename,
               error_file = args["--error-file"],
-              num_args=set(map(int, args['--num_args'].split(':'))))
+              num_args=num_args,
+              perfect_confidence=args['--perf_conf'])
     if not args['--error']:
         exit()
     b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)
@@ -517,6 +522,7 @@ if __name__ == '__main__':
               matchingFunc = matchingFunc,
               output_fn = out_filename,
               error_file = args["--error-file"],
-              num_args=set(map(int, args['--num_args'].split(':'))))
+              num_args=num_args,
+              perfect_confidence=args['--perf_conf'])
         b.error_ana_bi(compared_predicated1, compared_predicated2, tag1='sys1', tag2='sys2', showcase=10)
 
