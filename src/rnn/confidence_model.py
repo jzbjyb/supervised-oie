@@ -11,8 +11,9 @@ import nltk
 import time
 from docopt import docopt
 from keras.models import Sequential, Model
-from keras.layers import Input, Dense, LSTM, Embedding, TimeDistributedDense,\
-    TimeDistributed, merge, Bidirectional, Dropout
+from keras.layers import Input, Dense, LSTM, Embedding,\
+    TimeDistributed, merge, Bidirectional, Dropout, Add
+from keras.layers.merge import concatenate
 from keras.wrappers.scikit_learn import KerasClassifier
 from keras.utils import np_utils
 from keras.preprocessing.text import one_hot
@@ -36,6 +37,7 @@ from keras.models import model_from_json
 import logging
 logging.basicConfig(level = logging.DEBUG)
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 class Confidence_model:
     """
@@ -95,10 +97,9 @@ class Confidence_model:
         """
         Return a network computing confidence of the given OIE inputs
         """
-        return predict_layer(dropout(latent_layers(merge([embed(inp)
+        return predict_layer(dropout(latent_layers(concatenate([embed(inp)
                                                           for inp, embed in inputs_and_embeddings],
-                                                         mode = "concat",
-                                                         concat_axis = -1))))
+                                                          axis=-1))))
 
 
     # TODO: these should probably be deleted
@@ -351,10 +352,9 @@ class Confidence_model:
         # ]
 
         confidence_prediction = lambda inputs_and_embeddings:\
-                                predict_layer(dropout(latent_layers(merge([embed(inp)
+                                predict_layer(dropout(latent_layers(concatenate([embed(inp)
                                                                            for inp, embed in inputs_and_embeddings],
-                                                                          mode = "concat",
-                                                                        concat_axis = -1))))
+                                                                           axis=-1))))
 
 
 
@@ -363,8 +363,9 @@ class Confidence_model:
         neg_confidence = confidence_prediction(corrupt_input)
 
         # Combine these
-        output = merge([true_confidence, neg_confidence],
-                       mode = "sum")
+        #output = merge([true_confidence, neg_confidence],
+        #               mode = "sum")
+        output = Add()([true_confidence, neg_confidence])
 
         # Build model
         self.model = Model(input = map(itemgetter(0), true_input + corrupt_input),
