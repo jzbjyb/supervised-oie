@@ -15,6 +15,8 @@ import ntpath
 import numpy as np
 from glob import glob
 from docopt import docopt
+import matplotlib
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import logging
 from operator import itemgetter

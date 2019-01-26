@@ -11,7 +11,7 @@ import time
 from docopt import docopt
 from keras.models import Sequential, Model
 from keras.layers import Input, Dense, LSTM, Embedding, \
-    TimeDistributed, merge, Bidirectional, Dropout
+    TimeDistributed, merge, Bidirectional, Dropout, Reshape, Multiply, Lambda
 from keras.layers.merge import concatenate
 from keras.wrappers.scikit_learn import KerasClassifier
 from keras.utils import np_utils
@@ -33,6 +33,7 @@ from parsers.spacy_wrapper import spacy_whitespace_parser as spacy_ws
 
 from keras_bert import load_trained_model_from_checkpoint
 from beam_search import TaggingPredict, beamsearch
+import keras.backend as K
 
 import json
 import pdb
@@ -40,7 +41,7 @@ from keras.models import model_from_json
 import logging
 logging.basicConfig(level = logging.DEBUG)
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 
 '''
 import tensorflow as tf
@@ -192,6 +193,59 @@ class RNN_model:
                        sample_weight=X_train['mask_inputs'],
                        callbacks = self.get_callbacks(X_train))
 
+    def tune_confidence_pairwise(self, train_fn, dev_fn):
+        '''
+        both train_fn and dev_fn contain pair of samples
+        '''
+        # load the dataset (must load data before building the model)
+        X_train, Y_train = self.load_dataset(train_fn, pad_sent=True)
+        X_train['tag_true'] = Y_train
+        Y_train = np.ones((Y_train.shape[0])) # useless, just a placeholder
+        X_dev, Y_dev = self.load_dataset(dev_fn, pad_sent=True)
+        X_dev['tag_true'] = Y_dev
+        Y_dev = np.ones((Y_dev.shape[0])) # useless, just a placeholder
+
+        # build original tagging model
+        self.set_vanilla_model()
+
+        # get margin score
+        tag_prob = self.model.output
+        mask_inputs = self.model.input[-1]
+        tag_true = Input(shape=(self.sent_maxlen, self.num_of_classes()),
+                         dtype="int32", name="tag_true") # additional input for margin model
+        cast_to_float32 = Lambda(lambda x: K.cast(x, 'float32'))
+        tag_prob = Multiply()([cast_to_float32(tag_true), Lambda(lambda x: K.log(x))(tag_prob)])
+        tag_prob = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob)
+        reshape_sent = Lambda(lambda x: K.reshape(x, (-1, self.max_subsent * self.sent_maxlen)))
+        mask_inputs = cast_to_float32(reshape_sent(mask_inputs))
+        tag_prob = reshape_sent(tag_prob)
+        tag_prob = Multiply()([mask_inputs, tag_prob])
+        mask_inputs = Lambda(lambda x: K.sum(x, axis=-1))(mask_inputs)
+        tag_prob = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob)
+        sent_score = Lambda(lambda x: x[0] / x[1])([tag_prob, mask_inputs])
+        margin_score = Lambda(lambda x: x[::2] - x[1::2])(sent_score)
+        margin_score = Lambda(lambda x: K.reshape(x, (-1, 1)))(margin_score)
+        zeros_like = Lambda(lambda x: K.zeros_like(x))
+        margin_score_padded = concatenate(
+            [margin_score] + [zeros_like(margin_score)] * (self.max_subsent * 2 - 1), axis=0)
+
+        # build and compile model
+        new_model = Model(input=self.model.input + [tag_true], output=[margin_score_padded])
+        new_model.compile(optimizer='adam', loss='hinge', metrics=['hinge'])
+        new_model.summary()
+
+        # train the model
+        # batch_size requires a multiple of max_subsent
+        new_model.fit(X_train, Y_train, batch_size=self.batch_size * self.max_subsent,
+                      epochs=self.epochs, validation_data=(X_dev, Y_dev),)
+                      #callbacks=self.get_callbacks(X_train))
+
+    @staticmethod
+    def to_categorical(*args, **kwargs):
+        if len(args[0]) == 0:
+            return []
+        return np_utils.to_categorical(*args, **kwargs)
+
     @staticmethod
     def consolidate_labels(labels):
         """
@@ -310,9 +364,10 @@ class RNN_model:
                                              metric_val))
         return Y, y, ret
 
-    def load_dataset(self, fn):
+    def load_dataset(self, fn, pad_sent=False):
         """
         Load a supervised OIE dataset from file
+        If pad_sent=True, we split all the sentence into the same numbers of subsentence
         """
         df = pandas.read_csv(fn,
                              sep = self.sep,
@@ -326,7 +381,7 @@ class RNN_model:
         # Split according to sentences and encode
         sents = self.get_sents_from_df(df)
         logging.info("{} has {} sentences".format(fn, len(sents)))
-        X, Y = self.encode_inputs(sents, get_output=True)
+        X, Y = self.encode_inputs(sents, get_output=True, pad_sent=pad_sent)
         return (X, Y)
 
     def get_sents_from_df(self, df):
@@ -337,14 +392,24 @@ class RNN_model:
                 for run_id
                 in sorted(set(df.run_id.values))]
 
-    def get_fixed_size(self, sents):
+    def get_fixed_size(self, sents, pad_sent=False):
         """
         Partition sents into lists of sent_maxlen elements
         (execept the last in each sentence, which might be shorter)
         """
-        return [sent[s_ind : s_ind + self.sent_maxlen]
-                for sent in sents
-                for s_ind in range(0, len(sent), self.sent_maxlen)]
+        if pad_sent and not hasattr(self, 'max_subsent'):
+            # split sentence into equal numbers of subsentence
+            self.max_subsent = np.max([np.ceil(len(sent) / self.sent_maxlen) for sent in sents])
+            self.max_subsent = int(self.max_subsent)
+            logging.debug('max_subsent is {}'.format(self.max_subsent))
+        if not pad_sent:
+            return [sent[s_ind : s_ind + self.sent_maxlen]
+                    for sent in sents
+                    for s_ind in range(0, len(sent), self.sent_maxlen)]
+        else:
+            return [sent[s_ind * self.sent_maxlen : s_ind * self.sent_maxlen + self.sent_maxlen]
+                    for sent in sents
+                    for s_ind in range(self.max_subsent)]
 
     def get_head_pred_word(self, full_sent):
         """
@@ -367,7 +432,7 @@ class RNN_model:
                 return i
         raise Exception('can\'t find predicate haed')
 
-    def encode_inputs(self, sents, get_output=False):
+    def encode_inputs(self, sents, get_output=False, pad_sent=False):
         """
         Given a dataframe which is already split to sentences,
         encode inputs for rnn classification.
@@ -433,13 +498,12 @@ class RNN_model:
             sent_mask_list.append(mask)
             sent_runid_list.append([sent.run_id.values[0]] * len(mask))
 
-        #fixed_size_sents = self.get_fixed_size(sents)
-        fixed_size_sent_word_list = self.get_fixed_size(sent_word_list)
-        fixed_size_sent_pos_list = self.get_fixed_size(sent_pos_list)
-        fixed_size_sent_label_list = self.get_fixed_size(sent_label_list)
-        fixed_size_sent_pred_list = self.get_fixed_size(sent_pred_list)
-        fixed_size_sent_mask_list = self.get_fixed_size(sent_mask_list)
-        fixed_size_sent_runid_list = self.get_fixed_size(sent_runid_list)
+        fixed_size_sent_word_list = self.get_fixed_size(sent_word_list, pad_sent=pad_sent)
+        fixed_size_sent_pos_list = self.get_fixed_size(sent_pos_list, pad_sent=pad_sent)
+        fixed_size_sent_label_list = self.get_fixed_size(sent_label_list, pad_sent=pad_sent)
+        fixed_size_sent_pred_list = self.get_fixed_size(sent_pred_list, pad_sent=pad_sent)
+        fixed_size_sent_mask_list = self.get_fixed_size(sent_mask_list, pad_sent=pad_sent)
+        fixed_size_sent_runid_list = self.get_fixed_size(sent_runid_list, pad_sent=pad_sent)
 
         for sent_word, sent_pos, sent_label, sent_pred, sent_mask, sent_runid in zip(
             fixed_size_sent_word_list, fixed_size_sent_pos_list, 
@@ -447,8 +511,10 @@ class RNN_model:
             fixed_size_sent_mask_list, fixed_size_sent_runid_list):
             if self.use_bert:
                 # add special symbol
+                # For sentence shorted than sent_maxlen, [SEP] symbol is hard to remove
+                # from the output of bert. Hopefully, this is not a big problem.
                 sent_word.insert(0, '[CLS]')
-                sent_word.append('[SEP]') 
+                sent_word.append('[SEP]')
             pos_tags_encodings = \
                 [SPACY_POS_TAGS.index(pt) if pt in SPACY_POS_TAGS else 0 for pt in sent_pos]
             word_encodings = [self.emb.get_word_index(w, lower=False) for w in sent_word]
@@ -457,14 +523,17 @@ class RNN_model:
                 # so we feed the mask as input for selection purpose
                 pred_word_encodings = [pr for pr in sent_pred]
             else:
-                pred_word = run_id_to_pred[int(sent_runid[0])]
-                pred_word_encodings = [self.emb.get_word_index(pred_word) for _ in sent_word]
+                if len(sent_runid) > 0:
+                    pred_word = run_id_to_pred[int(sent_runid[0])]
+                    pred_word_encodings = [self.emb.get_word_index(pred_word) for _ in sent_word]
+                else:
+                    pred_word_encodings = []
 
             word_inputs.append([Sample(w) for w in word_encodings])
             pred_inputs.append([Sample(w) for w in pred_word_encodings])
             pos_inputs.append([Sample(pos) for pos in pos_tags_encodings])
             mask_inputs.append([Sample(m) for m in sent_mask])
-            label_outputs.append(list(np_utils.to_categorical(sent_label, num_classes=self.num_of_classes())))
+            label_outputs.append(list(RNN_model.to_categorical(sent_label, num_classes=self.num_of_classes())))
 
         # Pad / truncate to desired maximum length
         ret = defaultdict(lambda: [])
@@ -548,13 +617,14 @@ class RNN_model:
         return input_data
         '''
 
-    def encode_outputs(self, sents):
+    def encode_outputs(self, sents, pad_sent=False):
         """
+        Deprecated
         Given a dataframe split to sentences, encode outputs for rnn classification.
         Should return a list sequence of sample of length maxlen.
         """
         output_encodings = []
-        sents = self.get_fixed_size(sents)
+        sents = self.get_fixed_size(sents, pad_sent=pad_sent)
         # Encode outputs
         for sent in sents:
             output_encodings.append(list(np_utils.to_categorical(list(self.transform_labels(sent.label.values)),
@@ -735,6 +805,8 @@ class RNN_model:
             if type(inps) is not list:
                 inps = [inps]
             model_input.extend(inps)
+        # mask inputs
+        model_input.append(Input(shape=(self.sent_maxlen,), dtype="int32", name = "mask_inputs"))
         self.model = Model(input = model_input, output = [output])
 
         # Loss
@@ -920,7 +992,8 @@ if __name__ == "__main__":
                         model_dir = model_dir,
                         **rnn_params)
         #rnn = load_pretrained_rnn('../models/rnnoie_aw')
-        rnn.train(train_fn, dev_fn)
+        #rnn.train(train_fn, dev_fn)
+        rnn.tune_confidence_pairwise(train_fn, dev_fn)
 
     elif args["--pretrained"] is not None:
         rnn = load_pretrained_rnn(args["--pretrained"])
