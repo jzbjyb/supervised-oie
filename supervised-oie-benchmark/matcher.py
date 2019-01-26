@@ -71,8 +71,8 @@ class Matcher:
         """
         Return whehter gold and predicted extractions agree on the predicate
         """
-        s1 = ref.elementToStr(ref.pred)
-        s2 = ex.elementToStr(ex.pred)
+        s1 = ref.elementToStr(ref.pred, print_indices=False)
+        s2 = ex.elementToStr(ex.pred, print_indices=False)
         if ignoreCase:
             s1 = s1.lower()
             s2 = s2.lower()
@@ -91,8 +91,8 @@ class Matcher:
         """
         Return whehter gold and predicted extractions agree on the predicate
         """
-        sRef = ref.elementToStr(ref.pred).split(' ')
-        sEx = ex.elementToStr(ex.pred).split(' ')
+        sRef = ref.elementToStr(ref.pred, print_indices=False).split(' ')
+        sEx = ex.elementToStr(ex.pred, print_indices=False).split(' ')
 
         count = 0
 
@@ -109,7 +109,7 @@ class Matcher:
 
     @staticmethod
     def predHeadMatch(ref, ex, ignoreStopwords, ignoreCase):
-        pred = ' ' + ex.elementToStr(ex.pred) + ' '
+        pred = ' ' + ex.elementToStr(ex.pred, print_indices=False) + ' '
         pred = pred.find(' ' + ref.heads[0] + ' ')
         return pred >= 0, int(pred >= 0)
 
@@ -118,8 +118,8 @@ class Matcher:
         """
         Return whehter gold and predicted extractions agree on the arguments
         """
-        sRef = ' '.join([ref.elementToStr(elem) for elem in ref.args]).split(' ')
-        sEx = ' '.join([ex.elementToStr(elem) for elem in ex.args]).split(' ')
+        sRef = ' '.join([ref.elementToStr(elem, print_indices=False) for elem in ref.args]).split(' ')
+        sEx = ' '.join([ex.elementToStr(elem, print_indices=False) for elem in ex.args]).split(' ')
 
         count = 0
 
@@ -141,7 +141,7 @@ class Matcher:
         if len(ref.args) != len(ex.args):
             return False, 0
         for i, arg in enumerate(ex.args):
-            arg = ' ' + ex.elementToStr(arg) + ' '
+            arg = ' ' + ex.elementToStr(arg, print_indices=False) + ' '
             arg = arg.find(' ' + ref.heads[i + 1] + ' ')
             if arg < 0:
                 return False, 0
@@ -178,9 +178,9 @@ class Matcher:
         if len(ref.args) != len(ex.args):
             return False, 0
         for i, ref_arg in enumerate(ref.args):
-            if ref.elementToStr(ref_arg) != ex.elementToStr(ex.args[i]):
+            if ref.elementToStr(ref_arg, print_indices=False) != ex.elementToStr(ex.args[i], print_indices=False):
                 return False, 0
-        if ref.elementToStr(ref.pred) != ex.elementToStr(ex.pred):
+        if ref.elementToStr(ref.pred, print_indices=False) != ex.elementToStr(ex.pred, print_indices=False):
             return False, 0
         return True, 1
 

@@ -35,10 +35,12 @@ class TabReader(OieReader):
                 text, confidence, rel = data[:3]
                 rel = rel.split('##')
                 pred_pos = int(rel[1]) if len(rel) == 2 else None
-                rel = rel[0]
+                head_pred_index = pred_pos # TODO: head_pred_index is not necessarily the first predicate index
+                # rel is a tuple, where the first element is str and the second element is a list of index
+                rel = (rel[0], [pred_pos + i for i, w in enumerate(rel[0].split(' '))]) if len(rel) == 2 else rel[0]
                 curExtraction = Extraction(pred=rel,
                                            pred_pos=pred_pos,
-                                           head_pred_index=None,
+                                           head_pred_index=head_pred_index,
                                            sent = text,
                                            confidence = float(confidence),
                                            question_dist = "./question_distributions/dist_wh_sbj_obj1.json",
@@ -48,7 +50,8 @@ class TabReader(OieReader):
                 for arg in data[3:]:
                     arg = arg.split('##')
                     arg_pos = int(arg[1]) if len(arg) == 2 else None
-                    arg = arg[0]
+                    # arg is a tuple, where the first element is str and the second element is a list of index
+                    arg = (arg[0], [arg_pos + i for i, w in enumerate(arg[0].split(' '))]) if len(arg) == 2 else arg[0]
                     curExtraction.addArg(arg, arg_pos)
 
                 d[text] = d.get(text, []) + [curExtraction]

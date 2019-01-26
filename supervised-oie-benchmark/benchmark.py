@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--label=LABEL_FIEL] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -14,6 +14,8 @@ Options:
   --tabbed=TABBED_OIE          Read simple tab format file, where each line consists of:
                                 sent, prob, pred,arg1, arg2, ...
   --exactmatch                 Use exact match when judging whether an extraction is correct.
+  --error                      Whether to perform error analysis.
+  --label=LABEL_FILE           Whether to generate training data (in conll format) for confidence tuning.
 '''
 import docopt
 import string
@@ -437,6 +439,17 @@ def f_beta(precision, recall, beta = 1):
 f1 = lambda precision, recall: f_beta(precision, recall, beta = 1)
 
 
+def gen_confidence_pointwise_samples(extractions, out_filepath):
+    heads = ['word_id', 'word', 'pred', 'pred_id', 'head_pred_id', 'sent_id', 'run_id', 'label', 'y']
+    with open(out_filepath, 'w') as fout:
+        fout.write('{}\n'.format('\t'.join(heads))) # write heads
+        run_id = 0
+        for sent_id, sent in enumerate(extractions):
+            for ext in extractions[sent]:
+                y = 1 if len(ext.matched) > 0 else 0
+                conll_str = ext.to_conll(sent_id=sent_id, run_id=run_id, append=[y])
+                fout.write('{}\n\n'.format(conll_str))
+                run_id += 1
 
 
 if __name__ == '__main__':
@@ -514,6 +527,9 @@ if __name__ == '__main__':
               error_file = args["--error-file"],
               num_args=num_args,
               perfect_confidence=args['--perf_conf'])
+    if args['--label']:
+        # generate training data for confidence tuning
+        gen_confidence_pointwise_samples(compared_predicated1, args['--label'])
     if not args['--error']:
         exit()
     b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)

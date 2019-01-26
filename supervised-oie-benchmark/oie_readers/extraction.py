@@ -30,6 +30,22 @@ class Extraction:
         self.question_dist = question_dist
         self.index = index
 
+    def to_conll(self, sent_id=0, run_id=0, append=[]):
+        '''
+        conll format: word_id \t word \t pred \t pred_id \t head_pred_id \t sent_id \t run_id \t label
+        '''
+        sent = []
+        for word_id, word in enumerate(self.sent.split(' ')):
+            pred = self.elementToStr(self.pred, print_indices=False)
+            if type(self.pred) is not tuple:
+                raise Exception('position information is required')
+            pred_id = self.pred[1]
+            head_pred_id = self.head_pred_index
+            label = self.get_label(word_id)
+            sent.append('\t'.join(map(str,
+                                      [word_id, word, pred, pred_id, head_pred_id, sent_id, run_id, label] + append)))
+        return '\n'.join(sent)
+
     def distArgFromPred(self, arg):
         assert(len(self.pred) == 2)
         dists = []
