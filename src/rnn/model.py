@@ -9,6 +9,7 @@ import math
 import pandas
 import time
 from docopt import docopt
+import keras
 from keras.models import Sequential, Model
 from keras.layers import Input, Dense, LSTM, Embedding, \
     TimeDistributed, merge, Bidirectional, Dropout, Reshape, Multiply, Lambda
@@ -41,9 +42,8 @@ from keras.models import model_from_json
 import logging
 logging.basicConfig(level = logging.DEBUG)
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
-'''
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 config = tf.ConfigProto()
@@ -51,6 +51,7 @@ config.gpu_options.allow_growth = True
 sess = tf.Session(config=config)
 set_session(sess)
 
+'''
 from tensorflow import set_random_seed
 import random
 random.seed(2019)
@@ -119,7 +120,7 @@ class RNN_model:
 
         np.random.seed(self.seed)
 
-    def get_callbacks(self, X):
+    def get_callbacks(self, X, model=None):
         """
         Sets these callbacks as a class member.
         X is the encoded dataset used to print a sample of the output.
@@ -127,7 +128,7 @@ class RNN_model:
         1. Sample output each epoch
         2. Save best performing model each epoch
         """
-
+        score_callback = LambdaCallback(on_epoch_end=lambda epoch, logs: logging.debug(model.predict(X)))
         sample_output_callback = LambdaCallback(on_epoch_end = lambda epoch, logs:\
                                                 logging.debug(pformat(self.sample_labels(self.model.predict(X)))))
         checkpoint = ModelCheckpoint(os.path.join(self.model_dir,
@@ -137,7 +138,7 @@ class RNN_model:
 
         #return [sample_output_callback,
         #        checkpoint]
-        return [checkpoint]
+        return [score_callback]
 
     def plot(self, fn, train_fn):
         """
@@ -192,6 +193,93 @@ class RNN_model:
                        validation_data = (X_dev, Y_dev),
                        sample_weight=X_train['mask_inputs'],
                        callbacks = self.get_callbacks(X_train))
+
+    def tag_model_to_sentence_score(self, tag_inputs, tag_true):
+        # SHAPE: (None, sent_maxlen, num_class)
+        tag_prob = self.model(tag_inputs)
+        # SHAPE: (None, sent_maxlen)
+        mask_inputs = tag_inputs[-1]
+        cast_to_float32 = Lambda(lambda x: K.cast(x, 'float32'))
+        tag_prob = Multiply()([cast_to_float32(tag_true), Lambda(lambda x: K.log(x))(tag_prob)])
+        # SHAPE: (None, sent_maxlen)
+        tag_prob = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob)
+        reshape_sent = Lambda(lambda x: K.reshape(x, (-1, self.max_subsent * self.sent_maxlen)))
+        mask_inputs = cast_to_float32(reshape_sent(mask_inputs))
+        tag_prob = reshape_sent(tag_prob)
+        # SHAPE: (None, max_subsent * sent_maxlen)
+        tag_prob = Multiply()([mask_inputs, tag_prob])
+        mask_inputs = Lambda(lambda x: K.sum(x, axis=-1))(mask_inputs)
+        sent_score = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob)
+        # SHAPE: (None,)
+        sent_score = Lambda(lambda x: x[0] / x[1])([sent_score, mask_inputs])
+        return sent_score
+
+    def tune_confidence_pointwise(self, train_fn, dev_fn):
+        # fit the label first because train data does not have P-I
+        df1 = pandas.read_csv(train_fn, sep=self.sep, header=0, keep_default_na=False)
+        df2 = pandas.read_csv(dev_fn, sep=self.sep, header=0, keep_default_na=False)
+        self.encoder.fit(np.concatenate([df1.label.values, df2.label.values]))
+        # load train dataset (must load data before building the model)
+        X_train, Y_train = self.load_dataset(train_fn, pad_sent=True)
+        X_train['tag_true'] = Y_train
+        X_train = self.dataset_to_sentence_level(X_train)
+        Y_train = self.load_dataset_y(train_fn, mode='hinge')
+        '''
+        # load dev dataset
+        X_dev, Y_dev = self.load_dataset(dev_fn, pad_sent=True)
+        X_dev['tag_true'] = Y_dev
+        X_dev = self.dataset_to_sentence_level(X_dev)
+        Y_dev = self.load_dataset_y(dev_fn, mode='hinge')
+        '''
+
+        # sentence-level inputs and subsentence-level input shapes
+        sent_maxlen = self.max_subsent * self.sent_maxlen
+        if self.use_bert:
+            inputs = \
+                [Input(shape=(sent_maxlen + self.max_subsent * 2,), dtype="int32", name="word_inputs"),
+                 Input(shape=(sent_maxlen + self.max_subsent * 2,), dtype="int32", name="word_segment_inputs")]
+            new_shapes = [(self.sent_maxlen + 2,), (self.sent_maxlen + 2,)]
+        else:
+            inputs = [Input(shape=(sent_maxlen,), dtype="int32", name="word_inputs")]
+            new_shapes = [(self.sent_maxlen,)]
+        inputs.append(Input(shape=(sent_maxlen,), dtype="int32", name="predicate_inputs"))
+        new_shapes.append((self.sent_maxlen,))
+        inputs.append(Input(shape=(sent_maxlen,), dtype="int32", name="postags_inputs"))
+        new_shapes.append((self.sent_maxlen,))
+        inputs.append(Input(shape=(sent_maxlen,), dtype="int32", name="mask_inputs"))
+        new_shapes.append((self.sent_maxlen,))
+        inputs.append(Input(shape=(sent_maxlen, self.num_of_classes()), dtype="int32", name="tag_true"))
+        new_shapes.append((self.sent_maxlen, self.num_of_classes()))
+
+        # get subsentence-level inputs
+        sub_inputs = [Lambda(lambda x, sh: K.reshape(x, (-1,) + sh), arguments={'sh': ns})(inp) for inp, ns in zip(inputs, new_shapes)]
+        tag_true = sub_inputs[-1]
+        sub_inputs = sub_inputs[:-1]
+
+        # build original tagging model
+        self.set_vanilla_model()
+
+        # get sentence score
+        sent_score = self.tag_model_to_sentence_score(sub_inputs, tag_true)
+
+        # get loss
+        sent_score = Reshape((1,))(sent_score)
+        sent_score = Dense(1, activation=None, use_bias=True)(sent_score) # linear layer
+
+        # build and compile model
+        new_model = Model(input=inputs, output=[sent_score])
+        new_model.compile(optimizer='adam', loss='hinge', metrics=['hinge'])
+        new_model.summary()
+
+        # train the model
+        cb = 100
+        small_X_train = dict((k, X_train[k][:cb]) for k in X_train)
+        small_Y_train = Y_train[:cb]
+        new_model.fit(X_train, Y_train, batch_size=self.batch_size,
+                      epochs=self.epochs,
+                      callbacks=self.get_callbacks(small_X_train, new_model))
+                      #validation_data=(X_train, Y_train),
+                      #callbacks=self.get_callbacks(X_train))
 
     def tune_confidence_pairwise(self, train_fn, dev_fn):
         '''
@@ -363,6 +451,27 @@ class RNN_model:
             logging.info("{}: {:.4f}".format(metric_name,
                                              metric_val))
         return Y, y, ret
+
+    def load_dataset_y(self, fn, mode='default'):
+        df = pandas.read_csv(fn,
+                             sep=self.sep,
+                             header=0,
+                             keep_default_na=False)
+        sents = self.get_sents_from_df(df)
+        if mode == 'default':
+            y = np.array([int(sent.y.values[0]) for sent in sents])
+        elif mode == 'hinge': # +1 -1
+            y = np.array([(lambda x: x if x != 0 else -1)(int(sent.y.values[0])) for sent in sents])
+        return y
+
+    def dataset_to_sentence_level(self, X):
+        def to_new_shape(x):
+            shape = x.shape
+            if shape[0] % self.max_subsent != 0:
+                raise  Exception('input does not constitute valid sentence')
+            new_shape =  (shape[0] // self.max_subsent,) + (shape[1] * self.max_subsent,) + shape[2:]
+            return x.reshape(new_shape)
+        return dict((k, to_new_shape(X[k])) for k in X)
 
     def load_dataset(self, fn, pad_sent=False):
         """
@@ -993,7 +1102,7 @@ if __name__ == "__main__":
                         **rnn_params)
         #rnn = load_pretrained_rnn('../models/rnnoie_aw')
         #rnn.train(train_fn, dev_fn)
-        rnn.tune_confidence_pairwise(train_fn, dev_fn)
+        rnn.tune_confidence_pointwise(train_fn, dev_fn)
 
     elif args["--pretrained"] is not None:
         rnn = load_pretrained_rnn(args["--pretrained"])
