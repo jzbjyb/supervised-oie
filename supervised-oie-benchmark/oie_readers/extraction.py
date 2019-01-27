@@ -30,6 +30,15 @@ class Extraction:
         self.question_dist = question_dist
         self.index = index
 
+    @staticmethod
+    def position_contain(x, y):
+        '''
+        return whether x is contained by y
+        '''
+        if x[0] >= y[0] and x[-1] <= y[-1]:
+            return True
+        return False
+
     def to_conll(self, sent_id=0, run_id=0, append=[]):
         '''
         conll format: word_id \t word \t pred \t pred_id \t head_pred_id \t sent_id \t run_id \t label
@@ -133,7 +142,7 @@ class Extraction:
         return []
 
     def bow(self):
-        return ' '.join([self.elementToStr(elem) for elem in [self.pred] + self.args])
+        return ' '.join([self.elementToStr(elem, print_indices=False) for elem in [self.pred] + self.args])
 
     def getSortedArgs(self):
         """

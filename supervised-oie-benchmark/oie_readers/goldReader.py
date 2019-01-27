@@ -1,3 +1,4 @@
+import ast
 from oie_readers.oieReader import OieReader
 from oie_readers.extraction import Extraction
 from _collections import defaultdict
@@ -28,7 +29,12 @@ class GoldReader(OieReader):
                         heads = args[i+1:]
                         args = args[:i]
                         break
-                
+                # find position (in tuple format) for predicate, args, and heads if possible
+                if rel.startswith('(') and rel.endswith('])'):
+                    rel = ast.literal_eval(rel)
+                    heads = [ast.literal_eval(head) for head in heads]
+                    args = [ast.literal_eval(arg) for arg in args]
+
                 curExtraction = Extraction(pred = rel,
                                            head_pred_index = None,
                                            sent = text,

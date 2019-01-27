@@ -5,6 +5,7 @@ from nltk.parse import CoreNLPParser
 import nltk
 import numpy as np
 import time
+from oie_readers.extraction import Extraction
 
 parser = CoreNLPParser(url='http://localhost:9001')
 
@@ -109,9 +110,15 @@ class Matcher:
 
     @staticmethod
     def predHeadMatch(ref, ex, ignoreStopwords, ignoreCase):
-        pred = ' ' + ex.elementToStr(ex.pred, print_indices=False) + ' '
-        pred = pred.find(' ' + ref.heads[0] + ' ')
-        return pred >= 0, int(pred >= 0)
+        if type(ref.heads[0]) is tuple and type(ex.pred) is tuple:
+            # use position
+            cont = Extraction.position_contain(ref.heads[0][1], ex.pred[1])
+            return cont, int(cont)
+        else:
+            # use str
+            pred = ' ' + ex.elementToStr(ex.pred, print_indices=False) + ' '
+            pred = pred.find(' ' + ref.elementToStr(ref.heads[0], print_indices=False) + ' ')
+            return pred >= 0, int(pred >= 0)
 
     @staticmethod
     def argLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
@@ -141,10 +148,17 @@ class Matcher:
         if len(ref.args) != len(ex.args):
             return False, 0
         for i, arg in enumerate(ex.args):
-            arg = ' ' + ex.elementToStr(arg, print_indices=False) + ' '
-            arg = arg.find(' ' + ref.heads[i + 1] + ' ')
-            if arg < 0:
-                return False, 0
+            head = ref.heads[i + 1]
+            if type(head) is tuple and type(arg) is tuple:
+                # use position to evaluate
+                if not Extraction.position_contain(head[1], arg[1]):
+                    return False, 0
+            else:
+                # use str to evaluate
+                arg = ' ' + ex.elementToStr(arg, print_indices=False) + ' '
+                ind = arg.find(' ' + ref.elementToStr(head, print_indices=False) + ' ')
+                if ind < 0:
+                    return False, 0
         return True, 1
 
     @staticmethod

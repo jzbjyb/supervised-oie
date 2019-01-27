@@ -18,9 +18,18 @@ public class ExtractHead {
   private static class Combo {
     public String head;
     public int depth;
-    public Combo(String head, int depth) {
+    public int position;
+
+    public Combo(String head, int depth, int position) {
       this.head = head;
       this.depth = depth;
+      this.position = position;
+    }
+
+    public String toString() {
+      String output = "(\"" + this.head.replace("\"", "\\\"") + "\", " + 
+        "[" + this.position + "])";
+      return output;
     }
   }
 
@@ -30,7 +39,7 @@ public class ExtractHead {
       int ind = went.size();
       went.add(node.toString());
       if (ind < start || ind >= end) return null;
-      return new Combo(node.toString(), depth);
+      return new Combo(node.toString(), depth, ind);
     } else { // non-leaf node
       List<Combo> childHeads = new ArrayList<Combo>();
       int start_ind = went.size(); // start index of current node
@@ -51,7 +60,10 @@ public class ExtractHead {
         return minDepthHead;
       } else {
         // this node covers a subset of [start, end)
-        return new Combo(node.headTerminal(headFinder, parent).toString(), depth);
+        List<Tree> leaves = node.getLeaves();
+        Tree headLeaf = node.headTerminal(headFinder, parent);
+        int ind = leaves.indexOf(headLeaf) + start_ind;
+        return new Combo(headLeaf.toString(), depth, ind);
       }
     }
   }
@@ -76,6 +88,15 @@ public class ExtractHead {
   public static int[] getRange(String sentence, String subSentence) {
     // words in sentence and subSentence are separated by one whitespace
     int[] result = new int[2];
+    if (subSentence.startsWith("(") && subSentence.endsWith("])")) {
+      // directly use postion
+      int st = subSentence.lastIndexOf('[');
+      int ed = subSentence.lastIndexOf(']');
+      String[] pos = subSentence.substring(st+1, ed).split(",");
+      result[0] = Integer.parseInt(pos[0].trim());
+      result[1] = Integer.parseInt(pos[pos.length-1].trim()) + 1;
+      return result;
+    }
     int startInd = (" " + sentence + " ").indexOf(" " + subSentence + " ");
     if (startInd < 0) 
       throw new IllegalArgumentException("can't find\n" + subSentence + "\nin\n" + sentence);
@@ -90,7 +111,8 @@ public class ExtractHead {
     return result;
   }
 
-  public static void converter(String filename, String outFilename, boolean useSimple)
+  public static void converter(String filename, String outFilename, 
+    boolean useSimple, boolean usePosition)
     throws Exception {
     Scanner scan = new Scanner(new File(filename));
     PrintWriter pw = new PrintWriter(new FileWriter(outFilename));
@@ -123,7 +145,7 @@ public class ExtractHead {
       }
       Tree tree = cache.get(sent);
       // get the head for the regions we want
-      List<String> heads = new ArrayList<String>();
+      List<Combo> heads = new ArrayList<Combo>();
       for (int i = 1; i < data.size(); i++) {
         int[] range = getRange(sent, data.get(i));
         List<String> went = new ArrayList<String>();
@@ -134,12 +156,17 @@ public class ExtractHead {
           System.out.println(range[0] + " " + range[1]);
           throw new Exception("can't find head");
         }
-        heads.add(head.head);
+        heads.add(head);
       }
       if (heads.size() != data.size() - 1)
         throw new IllegalArgumentException("#head not correct");
       // output to file
-      pw.println(String.join("\t", data) + "\t<SYN_HEAD>\t" + String.join("\t", heads));
+      List<String> headStrList = new ArrayList<String>();
+      for (Combo head : heads) {
+        if (usePosition) headStrList.add(head.toString());
+        else headStrList.add(head.head);
+      }
+      pw.println(String.join("\t", data) + "\t<SYN_HEAD>\t" + String.join("\t", headStrList));
     } while (scan.hasNext());
     scan.close();
     pw.close();
@@ -149,7 +176,12 @@ public class ExtractHead {
     throws Exception {
     String inFile = args[0];
     String outFile = args[1];
-    converter(inFile, outFile, true);
+    boolean usePosition = false;
+    if (args.length > 2 && args[2].equals("usePos")) {
+      usePosition = true;
+      System.out.println("output head with position");
+    }
+    converter(inFile, outFile, true, usePosition);
   }
 
   public static void demo(String[] args) {
