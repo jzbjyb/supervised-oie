@@ -57,6 +57,9 @@ class Trained_oie:
         """
         ret = []
 
+        avg_conf = lambda probs: np.average(probs)
+        prod_conf = lambda probs: reduce(lambda x, y: x * y, probs) + 0.001
+
         for ((pred_ind, pred_word), labels) in self.model.predict_sentence_beamsearch(sent, k=beam):
             cur_args = []
             cur_arg = []
@@ -66,7 +69,7 @@ class Trained_oie:
             assert len(labels) == len(sent), '#labels should be equal to #tokens in the sentence'
             for i, ((label, prob), word) in enumerate(zip(labels, sent)):
                 probs.append(prob)
-                # TODO: only focus on argument
+                # TODO: (1) only focus on argument (2) what if arguments are not in order
                 if label.startswith("A"):
                     cur_arg.append((word, i))
                     #probs.append(prob)
@@ -81,7 +84,7 @@ class Trained_oie:
                                       (pred_word, pred_ind),
                                       cur_args,
                                       probs,
-                                      calc_prob=lambda probs: reduce(lambda x, y: x * y, probs) + 0.001,
+                                      calc_prob=prod_conf,
                                   ))
         return ret
 

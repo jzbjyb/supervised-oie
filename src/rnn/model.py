@@ -1,5 +1,5 @@
 """ Usage:
-    model [--train=TRAIN_FN] [--dev=DEV_FN] --test=TEST_FN [--pretrained=MODEL_DIR] [--load_hyperparams=MODEL_JSON] [--saveto=MODEL_DIR]
+    model [--train=TRAIN_FN] [--dev=DEV_FN] --test=TEST_FN [--pretrained=MODEL_DIR] [--load_hyperparams=MODEL_JSON] [--saveto=MODEL_DIR] [--restorefrom=RESTORE_DIR]
 """
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))) # append parent path
@@ -63,13 +63,13 @@ class RNN_model:
     """
     Represents an RNN model for supervised OIE
     """
-    def __init__(self,  model_fn, sent_maxlen = None, emb_filename = None,
+    def __init__(self, sent_maxlen = None, emb_filename = None,
                  batch_size = 5, seed = 42, sep = '\t',
                  hidden_units = pow(2, 7),trainable_emb = True,
                  emb_dropout = 0.1, num_of_latent_layers = 2,
                  epochs = 10, pred_dropout = 0.1, model_dir = "./models/",
                  classes = None, pos_tag_embedding_size = 5,
-                 use_bert = False,
+                 use_bert = False, model_type='tag', restore_dir=None,
     ):
         """
         Initialize the model
@@ -92,7 +92,6 @@ class RNN_model:
         classes - the classes to be encoded (list of strings)
         pos_tag_embedding_size - The number of features to use when encoding pos tags
         """
-        self.model_fn = lambda : model_fn(self)
         self.model_dir = model_dir
         self.sent_maxlen = sent_maxlen
         self.batch_size = batch_size
@@ -117,6 +116,25 @@ class RNN_model:
         self.classes = classes
         self.pos_tag_embedding_size = pos_tag_embedding_size
         self.use_bert = use_bert
+        # 1. 'tag' for tagging model
+        # 2. 'conf' for confidence model based on tagging model
+        # 3. 'conf_new' for confidence model based on new model
+        self.model_type = model_type
+        if self.model_type not in {'tag', 'conf', 'conf_new'}:
+            raise ValueError('model_type not supported')
+        self.restore_dir = restore_dir # path to the weights from which the model is restored
+
+        # based on model_type and restore_dir,
+        # choose model construction function and training function
+        if self.model_type == 'tag':
+            if self.restore_dir is None: # train new tagging model
+                self.model_fn = self.set_vanilla_model
+            else: # load pretrained model
+                self.model_fn = self.set_model_from_file
+            self.train = self.train_tagging_model
+        elif self.model_type == 'conf':
+            self.model_fn = self.set_confidence_pointwise_model
+            self.train = self.train_confidence_pointwise_model
 
         np.random.seed(self.seed)
 
@@ -128,17 +146,15 @@ class RNN_model:
         1. Sample output each epoch
         2. Save best performing model each epoch
         """
-        score_callback = LambdaCallback(on_epoch_end=lambda epoch, logs: logging.debug(model.predict(X)))
-        sample_output_callback = LambdaCallback(on_epoch_end = lambda epoch, logs:\
-                                                logging.debug(pformat(self.sample_labels(self.model.predict(X)))))
-        checkpoint = ModelCheckpoint(os.path.join(self.model_dir,
-                                                  "weights.hdf5"),
-                                     verbose = 1,
-                                     save_best_only = False)   # TODO: is there a way to save by best val_acc?
+        model_output = LambdaCallback(on_epoch_end=lambda epoch, logs: \
+            logging.debug(model.predict(X)))
+        sample_output = LambdaCallback(on_epoch_end=lambda epoch, logs: \
+            logging.debug(pformat(self.sample_labels(self.model.predict(X)))))
+        checkpoint = ModelCheckpoint(os.path.join(self.model_dir, 'weights.hdf5'),
+            verbose=1, save_best_only=False) # TODO: is there a way to save by best val_acc?
 
-        #return [sample_output_callback,
-        #        checkpoint]
-        return [score_callback]
+        return [checkpoint]
+        #return [model_output]
 
     def plot(self, fn, train_fn):
         """
@@ -154,10 +170,18 @@ class RNN_model:
         """
         Return the classes which are classified by this model
         """
+        if self.classes is not None:
+            return self.classes
+        try:
+            return self.encoder.classes_
+        except:
+            return None
+        '''
         try:
             return self.encoder.classes_
         except:
             return self.classes
+        '''
 
     def train_and_test(self, train_fn, test_fn):
         """
@@ -169,11 +193,12 @@ class RNN_model:
         return self.test(test_fn)
         logging.info("Done!")
 
-    def train(self, train_fn, dev_fn):
+    def train_tagging_model(self, train_fn, dev_fn):
         """
         Train this model on a given train dataset
         Dev test is used for model checkpointing
         """
+        # load dataset
         X_train, Y_train = self.load_dataset(train_fn)
         X_dev, Y_dev = self.load_dataset(dev_fn)
         logging.debug('UNK appears {} times out of {} ({}%)'.format(
@@ -182,6 +207,7 @@ class RNN_model:
         top_unk_words = sorted(self.emb.unk_words.items(), key=lambda x: -x[1])[:10]
         logging.debug('totally {} UNK words: {}'.format(len(self.emb.unk_words), top_unk_words))
         logging.debug("Classes: {}".format((self.num_of_classes(), self.classes_())))
+
         # Set model params, called here after labels have been identified in load dataset
         self.model_fn()
 
@@ -194,11 +220,10 @@ class RNN_model:
                        sample_weight=X_train['mask_inputs'],
                        callbacks = self.get_callbacks(X_train))
 
-    def tag_model_to_sentence_score(self, tag_inputs, tag_true):
+    def tag_model_to_sentence_score(self, tag_inputs, mask_inputs, tag_true):
         # SHAPE: (None, sent_maxlen, num_class)
         tag_prob = self.model(tag_inputs)
         # SHAPE: (None, sent_maxlen)
-        mask_inputs = tag_inputs[-1]
         cast_to_float32 = Lambda(lambda x: K.cast(x, 'float32'))
         tag_prob = Multiply()([cast_to_float32(tag_true), Lambda(lambda x: K.log(x))(tag_prob)])
         # SHAPE: (None, sent_maxlen)
@@ -214,24 +239,7 @@ class RNN_model:
         sent_score = Lambda(lambda x: x[0] / x[1])([sent_score, mask_inputs])
         return sent_score
 
-    def tune_confidence_pointwise(self, train_fn, dev_fn):
-        # fit the label first because train data does not have P-I
-        df1 = pandas.read_csv(train_fn, sep=self.sep, header=0, keep_default_na=False)
-        df2 = pandas.read_csv(dev_fn, sep=self.sep, header=0, keep_default_na=False)
-        self.encoder.fit(np.concatenate([df1.label.values, df2.label.values]))
-        # load train dataset (must load data before building the model)
-        X_train, Y_train = self.load_dataset(train_fn, pad_sent=True)
-        X_train['tag_true'] = Y_train
-        X_train = self.dataset_to_sentence_level(X_train)
-        Y_train = self.load_dataset_y(train_fn, mode='hinge')
-        '''
-        # load dev dataset
-        X_dev, Y_dev = self.load_dataset(dev_fn, pad_sent=True)
-        X_dev['tag_true'] = Y_dev
-        X_dev = self.dataset_to_sentence_level(X_dev)
-        Y_dev = self.load_dataset_y(dev_fn, mode='hinge')
-        '''
-
+    def set_confidence_pointwise_model(self):
         # sentence-level inputs and subsentence-level input shapes
         sent_maxlen = self.max_subsent * self.sent_maxlen
         if self.use_bert:
@@ -252,36 +260,60 @@ class RNN_model:
         new_shapes.append((self.sent_maxlen, self.num_of_classes()))
 
         # get subsentence-level inputs
-        sub_inputs = [Lambda(lambda x, sh: K.reshape(x, (-1,) + sh), arguments={'sh': ns})(inp) for inp, ns in zip(inputs, new_shapes)]
+        sub_inputs = [Lambda(lambda x, sh: K.reshape(x, (-1,) + sh), arguments={'sh': ns})(inp) for inp, ns in
+                      zip(inputs, new_shapes)]
         tag_true = sub_inputs[-1]
-        sub_inputs = sub_inputs[:-1]
+        mask_inputs = sub_inputs[-2]
+        sub_inputs = sub_inputs[:-2]
 
-        # build original tagging model
-        self.set_vanilla_model()
+        # build or load original tagging model
+        if self.restore_dir is None:
+            self.set_vanilla_model()
+        else:
+            self.set_model_from_file()
 
         # get sentence score
-        sent_score = self.tag_model_to_sentence_score(sub_inputs, tag_true)
+        sent_score = self.tag_model_to_sentence_score(sub_inputs, mask_inputs, tag_true)
 
         # get loss
         sent_score = Reshape((1,))(sent_score)
-        sent_score = Dense(1, activation=None, use_bias=True)(sent_score) # linear layer
+        sent_score = Dense(1, activation=None, use_bias=True)(sent_score)  # linear layer
 
         # build and compile model
         new_model = Model(input=inputs, output=[sent_score])
-        new_model.compile(optimizer='adam', loss='hinge', metrics=['hinge'])
+        opt = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False, clipnorm=0.000001)
+        new_model.compile(optimizer=opt, loss='hinge', metrics=['hinge'])
         new_model.summary()
+        return new_model
+
+    def train_confidence_pointwise_model(self, train_fn, dev_fn):
+        # load train dataset (must load data before building the model)
+        X_train, Y_train = self.load_dataset(train_fn, pad_sent=True)
+        X_train['tag_true'] = Y_train
+        X_train = self.dataset_to_sentence_level(X_train)
+        Y_train = self.load_dataset_y(train_fn, mode='hinge')
+        # load dev dataset
+        X_dev, Y_dev = self.load_dataset(dev_fn, pad_sent=True)
+        X_dev['tag_true'] = Y_dev
+        X_dev = self.dataset_to_sentence_level(X_dev)
+        Y_dev = self.load_dataset_y(dev_fn, mode='hinge')
+
+        new_model = self.model_fn()
 
         # train the model
         cb = 100
         small_X_train = dict((k, X_train[k][:cb]) for k in X_train)
         small_Y_train = Y_train[:cb]
+        def save_model():
+            self.save_model_to_file(os.path.join(self.model_dir, "model.json"))
+            self.model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
+        callback = LambdaCallback(on_epoch_end=lambda epoch, logs: save_model()) # only save tagging model
         new_model.fit(X_train, Y_train, batch_size=self.batch_size,
                       epochs=self.epochs,
-                      callbacks=self.get_callbacks(small_X_train, new_model))
-                      #validation_data=(X_train, Y_train),
-                      #callbacks=self.get_callbacks(X_train))
+                      callbacks=[callback],
+                      validation_data=(X_dev, Y_dev))
 
-    def tune_confidence_pairwise(self, train_fn, dev_fn):
+    def train_confidence_pairwise_model(self, train_fn, dev_fn):
         '''
         both train_fn and dev_fn contain pair of samples
         '''
@@ -660,7 +692,7 @@ class RNN_model:
                 ret[name].append([sample.encode() for sample in samples])
         input_data = {k: np.array(v) for k, v in ret.iteritems()}
         if self.use_bert:
-            # bert has more input
+            # bert hinput
             input_data['word_segment_inputs'] = np.zeros_like(input_data['word_inputs'])
         if not get_output:
             return input_data
@@ -755,7 +787,12 @@ class RNN_model:
         # Fallback:
         # return self.encoder.transform(labels)
         classes  = list(self.classes_())
-        return [classes.index(label) for label in labels]
+        def index_with_exception(label):
+            try:
+                return classes.index(label)
+            except ValueError:
+                return classes.index('O')
+        return [index_with_exception(label) for label in labels]
 
     def transform_output_probs(self, y, get_prob = False):
         """
@@ -829,7 +866,7 @@ class RNN_model:
         else:
             return layers[0]()(self.stack(x, layers[1:]))
 
-    def set_model_from_file(self):
+    def set_model_from_file(self, rebuild=False):
         """
         Receives an instance of RNN and returns a model from the self.model_dir
         path which should contain a file named: model.json,
@@ -839,24 +876,24 @@ class RNN_model:
         """
         from glob import glob
 
-        weights_fn = glob(os.path.join(self.model_dir, "*.hdf5"))
-        assert len(weights_fn) == 1, "More/Less than one weights file in {}: {}".format(self.model_dir,
-                                                                                        weights_fn)
+        weights_fn = glob(os.path.join(self.restore_dir, "*.hdf5"))
+        assert len(weights_fn) == 1, \
+            "More/Less than one weights file in {}: {}".format(self.restore_dir, weights_fn)
         weights_fn = weights_fn[0]
-        logging.debug("Weights file: {}".format(weights_fn))
-        try:
-            logging.debug('use json file to build model')
-            self.model = model_from_json(open(os.path.join(self.model_dir,
-                                                       "./model.json")).read())
-        except:
-            logging.debug('use function to build model')
-            self.set_vanilla_model(dump_json=False)
+        model_json_fn = os.path.join(self.restore_dir, "./model.json")
 
+        try:
+            if rebuild:
+                raise Exception('rebuild model')
+            self.model = model_from_json(open(model_json_fn).read())
+            self.model.compile(optimizer="adam", loss='categorical_crossentropy',
+                sample_weight_mode='temporal', metrics=["accuracy"])
+            logging.debug('use json file to build model')
+        except:
+            self.set_vanilla_model(dump_json=False)
+            logging.debug('use function to build model')
+        logging.debug('load weights from {}'.format(weights_fn))
         self.model.load_weights(weights_fn)
-        self.model.compile(optimizer="adam",
-                           loss='categorical_crossentropy',
-                           sample_weight_mode='temporal',
-                           metrics = ["accuracy"])
 
     def set_vanilla_model(self, dump_json=True):
         """
@@ -915,7 +952,7 @@ class RNN_model:
                 inps = [inps]
             model_input.extend(inps)
         # mask inputs
-        model_input.append(Input(shape=(self.sent_maxlen,), dtype="int32", name = "mask_inputs"))
+        #model_input.append(Input(shape=(self.sent_maxlen,), dtype="int32", name = "mask_inputs"))
         self.model = Model(input = model_input, output = [output])
 
         # Loss
@@ -949,6 +986,7 @@ class RNN_model:
             "emb_filename": self.emb_filename,
             "pos_tag_embedding_size": self.pos_tag_embedding_size,
             "use_bert": self.use_bert,
+            "model_type": self.model_type,
         }
 
     def save_model_to_file(self, fn):
@@ -1037,16 +1075,16 @@ def pad_sequences(sequences, pad_func, maxlen = None):
 
 
 
-def load_pretrained_rnn(model_dir):
+def load_pretrained_rnn(restore_dir):
     """ Static trained model loader function """
-    rnn_params = json.load(open(os.path.join(model_dir, "model.json")))["rnn"]
+    # load model configuration
+    rnn_params = json.load(open(os.path.join(restore_dir, "model.json")))["rnn"]
 
-    logging.info("Loading model from: {}".format(model_dir))
-    rnn = RNN_model(model_fn = RNN_model.set_model_from_file,
-                    model_dir = model_dir,
-                    **rnn_params)
+    # load model architectures and weights
+    logging.info('loading model config from: {}'.format(restore_dir))
+    rnn = RNN_model(restore_dir=restore_dir, **rnn_params) # model_dir not specified
 
-    # Compile model
+    # compile model
     rnn.model_fn()
 
     return rnn
@@ -1060,49 +1098,53 @@ am = lambda myList: [i[0] for i in sorted(enumerate(myList), key=lambda x:x[1], 
 if __name__ == "__main__":
     from pprint import pprint
     args = docopt(__doc__)
-    logging.debug(args)
+    #logging.debug(args)
     test_fn = args["--test"]
 
     if args["--train"] is not None:
         train_fn = args["--train"]
         dev_fn = args["--dev"]
 
+        # load parameters
         if args["--load_hyperparams"] is not None:
             # load hyperparams from json file
             json_fn = args["--load_hyperparams"]
-            logging.info("Loading model from: {}".format(json_fn))
+            logging.info('load model config from: {}'.format(json_fn))
             rnn_params = json.load(open(json_fn))["rnn"]
-            rnn_params["classes"] = None  # Just to make sure the model computes the correct labels
+            #rnn_params["classes"] = None  # Just to make sure the model computes the correct labels
+            if "classes" in rnn_params:
+                logging.info('the order of classes matters! {}'.format(rnn_params['classes']))
 
         else:
             # Use some default params
             rnn_params = {"sent_maxlen":  20,
                           "hidden_units": pow(2, 10),
                           "num_of_latent_layers": 2,
-                          "emb_filename": emb_filename,
+                          "emb_filename": None,
                           "epochs": 10,
                           "trainable_emb": True,
                           "batch_size": 50,
                           "emb_filename": "../pretrained_word_embeddings/glove.6B.50d.txt",
                           "use_bert": False,
+                          "model_type": "tag",
             }
+        #logging.debug("hyperparams:\n{}".format(pformat(rnn_params)))
 
-
-        logging.debug("hyperparams:\n{}".format(pformat(rnn_params)))
+        # save and restore path
         if args["--saveto"] is not None:
             model_dir = os.path.join(args["--saveto"], "{}/".format(time.strftime("%d_%m_%Y_%H_%M")))
         else:
             model_dir = "../models/{}/".format(time.strftime("%d_%m_%Y_%H_%M"))
-        logging.debug("Saving models to: {}".format(model_dir))
         if not os.path.exists(model_dir):
             os.makedirs(model_dir)
+        logging.info('save model to: {}'.format(model_dir))
+        restore_dir = None
+        if args['--restorefrom'] is not None:
+            restore_dir = args['--restorefrom']
+            logging.info('restore model from: {}'.format(restore_dir))
 
-        rnn = RNN_model(model_fn = RNN_model.set_vanilla_model,
-                        model_dir = model_dir,
-                        **rnn_params)
-        #rnn = load_pretrained_rnn('../models/rnnoie_aw')
-        #rnn.train(train_fn, dev_fn)
-        rnn.tune_confidence_pointwise(train_fn, dev_fn)
+        rnn = RNN_model(model_dir=model_dir, restore_dir=restore_dir, **rnn_params)
+        rnn.train(train_fn, dev_fn)
 
     elif args["--pretrained"] is not None:
         rnn = load_pretrained_rnn(args["--pretrained"])
