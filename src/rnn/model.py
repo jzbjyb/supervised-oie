@@ -70,6 +70,7 @@ class RNN_model:
                  epochs = 10, pred_dropout = 0.1, model_dir = "./models/",
                  classes = None, pos_tag_embedding_size = 5,
                  use_bert = False, model_type='tag', restore_dir=None,
+                 save_type='tag',
     ):
         """
         Initialize the model
@@ -135,6 +136,13 @@ class RNN_model:
         elif self.model_type == 'conf':
             self.model_fn = self.set_confidence_pointwise_model
             self.train = self.train_confidence_pointwise_model
+            # save_type decides which model to save
+            # 1. 'tag' is to load and save the tagging model
+            # 2. 'conf' is to load and save the confidence model
+            # 3. 'tag-conf' is to load tagging model and save confidence model
+            self.save_type = save_type
+            if self.save_type not in {'tag', 'conf', 'tag-conf'}:
+                raise ValueError('save_type not supported')
 
         np.random.seed(self.seed)
 
@@ -268,9 +276,11 @@ class RNN_model:
 
         # build or load original tagging model
         if self.restore_dir is None:
-            self.set_vanilla_model()
-        else:
+            self.set_vanilla_model(dump_json=False)
+        elif self.save_type == 'tag' or self.save_type == 'tag-conf':
             self.set_model_from_file()
+        elif self.save_type == 'conf':
+            self.set_vanilla_model(dump_json=False)
 
         # get sentence score
         sent_score = self.tag_model_to_sentence_score(sub_inputs, mask_inputs, tag_true)
@@ -281,9 +291,12 @@ class RNN_model:
 
         # build and compile model
         new_model = Model(input=inputs, output=[sent_score])
-        opt = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False, clipnorm=0.000001)
+        opt = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False, clipnorm=0.00001)
         new_model.compile(optimizer=opt, loss='hinge', metrics=['hinge'])
-        new_model.summary()
+        if self.restore_dir is not None and self.save_type == 'conf':
+            new_model.load_weights(os.path.join(self.restore_dir, 'weights.hdf5'))
+        else:
+            new_model.summary()
         return new_model
 
     def train_confidence_pointwise_model(self, train_fn, dev_fn):
@@ -292,6 +305,7 @@ class RNN_model:
         X_train['tag_true'] = Y_train
         X_train = self.dataset_to_sentence_level(X_train)
         Y_train = self.load_dataset_y(train_fn, mode='hinge')
+        X_weight = self.load_dataset_weight(train_fn)
         # load dev dataset
         X_dev, Y_dev = self.load_dataset(dev_fn, pad_sent=True)
         X_dev['tag_true'] = Y_dev
@@ -301,14 +315,15 @@ class RNN_model:
         new_model = self.model_fn()
 
         # train the model
-        cb = 100
-        small_X_train = dict((k, X_train[k][:cb]) for k in X_train)
-        small_Y_train = Y_train[:cb]
         def save_model():
-            self.save_model_to_file(os.path.join(self.model_dir, "model.json"))
-            self.model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
+            #self.save_model_to_file(os.path.join(self.model_dir, "model.json"))
+            if self.save_type == 'tag':
+                self.model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
+            elif self.save_type == 'conf' or self.save_type == 'tag-conf':
+                new_model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
         callback = LambdaCallback(on_epoch_end=lambda epoch, logs: save_model()) # only save tagging model
         new_model.fit(X_train, Y_train, batch_size=self.batch_size,
+                      sample_weight=X_weight,
                       epochs=self.epochs,
                       callbacks=[callback],
                       validation_data=(X_dev, Y_dev))
@@ -457,7 +472,26 @@ class RNN_model:
                                  "run_id": [-1] * len(sent), # Mock running id
                                  "head_pred_id": head_pred_id})
 
-    def test(self, test_fn, eval_metrics):
+    def test_confidence_model(self, test_fn, test_extraction_fn, new_extractio_fn):
+        # load test dataset
+        X_test, Y_test = self.load_dataset(test_fn, pad_sent=True)
+        X_test['tag_true'] = Y_test
+        X_test = self.dataset_to_sentence_level(X_test)
+        Y_test = self.load_dataset_y(test_fn, mode='hinge')
+
+        new_model = self.model_fn()
+
+        # test the model
+        y = new_model.predict(X_test)
+        y = y.flatten()
+        with open(test_extraction_fn, 'r') as fin, open(new_extractio_fn, 'w') as fout:
+            for i, l in enumerate(fin):
+                l = l.split('\t')
+                l[1] = str(y[i])
+                fout.write('\t'.join(l))
+        return y
+
+    def test_tagging_model(self, test_fn, eval_metrics):
         """
         Evaluate this model on a test file
         eval metrics is a list composed of:
@@ -484,11 +518,14 @@ class RNN_model:
                                              metric_val))
         return Y, y, ret
 
+    def load_dataset_weight(self, fn):
+        df = pandas.read_csv(fn, sep=self.sep, header=0, keep_default_na=False, quoting=3)
+        sents = self.get_sents_from_df(df)
+        w = np.array([float(sent.weight.values[0]) for sent in sents])
+        return w
+
     def load_dataset_y(self, fn, mode='default'):
-        df = pandas.read_csv(fn,
-                             sep=self.sep,
-                             header=0,
-                             keep_default_na=False)
+        df = pandas.read_csv(fn, sep=self.sep, header=0, keep_default_na=False, quoting=3)
         sents = self.get_sents_from_df(df)
         if mode == 'default':
             y = np.array([int(sent.y.values[0]) for sent in sents])
@@ -510,10 +547,7 @@ class RNN_model:
         Load a supervised OIE dataset from file
         If pad_sent=True, we split all the sentence into the same numbers of subsentence
         """
-        df = pandas.read_csv(fn,
-                             sep = self.sep,
-                             header = 0,
-                             keep_default_na = False)
+        df = pandas.read_csv(fn, sep=self.sep, header=0, keep_default_na=False, quoting=3)
 
         # Encode one-hot representation of the labels
         if self.classes_() is None:
@@ -700,63 +734,6 @@ class RNN_model:
             buffer = np.array(pad_sequences(
                 label_outputs, lambda : np.zeros(self.num_of_classes()), maxlen = self.sent_maxlen)))
         return input_data, output_data
-
-        '''
-        for sent in fixed_size_sents:
-
-            assert(len(set(sent.run_id.values)) == 1)
-
-            word_indices = sent.index.values
-            sent_words = sent.word.values
-            # must lowercase all the words before mapping to int because of
-            # the special symbols in bert
-            sent_words = np.array([w.lower() for w in sent_words])
-
-            if self.use_bert:
-                sent_words = np.insert(sent_words, 0, '[CLS]')
-                sent_words = np.append(sent_words, '[SEP]')
-
-            sent_str = " ".join(sent_words)
-
-            pos_tags_encodings = [(SPACY_POS_TAGS.index(word_id_to_pos[word_ind]) \
-                                   if word_id_to_pos[word_ind] in SPACY_POS_TAGS \
-                                   else 0)
-                                  for word_ind
-                                  in word_indices]
-
-            word_encodings = [self.emb.get_word_index(w, lower=False)
-                              for w in sent_words]
-
-            # Same pred word encodings for all words in the sentence
-            pred_word = run_id_to_pred[int(sent.run_id.values[0])]
-            pred_word_encodings = [self.emb.get_word_index(pred_word)
-                                    for _ in sent_words]
-
-            word_inputs.append([Sample(w) for w in word_encodings])
-            pred_inputs.append([Sample(w) for w in pred_word_encodings])
-            pos_inputs.append([Sample(pos) for pos in pos_tags_encodings])
-
-        # Pad / truncate to desired maximum length
-        ret = defaultdict(lambda: [])
-
-        input_titles = ["word_inputs", "predicate_inputs", "postags_inputs"]
-        input_tensors = [word_inputs, pred_inputs, pos_inputs]
-        if self.use_bert:
-            input_pad_lens = [self.sent_maxlen+2, self.sent_maxlen+2, self.sent_maxlen]
-        else:
-            input_pad_lens = [self.sent_maxlen, self.sent_maxlen, self.sent_maxlen]
-        for name, sequence, pad_len in zip(input_titles, input_tensors, input_pad_lens):
-            for samples in pad_sequences(sequence,
-                                         pad_func = lambda : Pad_sample(),
-                                         maxlen = pad_len):
-                ret[name].append([sample.encode() for sample in samples])
-        input_data = {k: np.array(v) for k, v in ret.iteritems()}
-        if self.use_bert:
-            # bert has more input
-            input_data['word_segment_inputs'] = np.zeros_like(input_data['word_inputs'])
-            input_data['predicate_segment_inputs'] = np.zeros_like(input_data['predicate_inputs'])
-        return input_data
-        '''
 
     def encode_outputs(self, sents, pad_sent=False):
         """
@@ -987,6 +964,7 @@ class RNN_model:
             "pos_tag_embedding_size": self.pos_tag_embedding_size,
             "use_bert": self.use_bert,
             "model_type": self.model_type,
+            "save_type": self.save_type,
         }
 
     def save_model_to_file(self, fn):
@@ -1127,6 +1105,7 @@ if __name__ == "__main__":
                           "emb_filename": "../pretrained_word_embeddings/glove.6B.50d.txt",
                           "use_bert": False,
                           "model_type": "tag",
+                          "save_type": "tag",
             }
         #logging.debug("hyperparams:\n{}".format(pformat(rnn_params)))
 
@@ -1147,6 +1126,16 @@ if __name__ == "__main__":
         rnn.train(train_fn, dev_fn)
 
     elif args["--pretrained"] is not None:
+        json_fn = args['--load_hyperparams']
+        logging.info('load model config from: {}'.format(json_fn))
+        rnn_params = json.load(open(json_fn))["rnn"]
+
+        restore_dir = args['--pretrained']
+        logging.info('restore model from: {}'.format(restore_dir))
+
+        rnn = RNN_model(restore_dir=restore_dir, **rnn_params)
+        rnn.test_confidence_model(*test_fn.split(':'))
+        '''
         rnn = load_pretrained_rnn(args["--pretrained"])
         Y, y, metrics = rnn.test(test_fn,
                                  eval_metrics = [("F1 (micro)",
@@ -1160,6 +1149,7 @@ if __name__ == "__main__":
                                                                                     average = 'micro')),
                                                  ("Accuracy", metrics.accuracy_score),
                                              ])
+        '''
 """
 - the sentence max length is an important factor on convergence.
 This makes sense, shorter sentences are easier to memorize.

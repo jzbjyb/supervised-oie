@@ -84,7 +84,7 @@ class Trained_oie:
                                       (pred_word, pred_ind),
                                       cur_args,
                                       probs,
-                                      calc_prob=prod_conf,
+                                      calc_prob=avg_conf,
                                   ))
         return ret
 

@@ -1,6 +1,6 @@
 {"rnn":{
   "model_type": "conf",
-  "save_type": "tag-conf",
+  "save_type": "conf",
   "sent_maxlen": 20,
   "sep": "\t",
   "batch_size": 50,

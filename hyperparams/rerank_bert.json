@@ -4,7 +4,7 @@
   "sent_maxlen": 20,
   "sep": "\t",
   "batch_size": 50,
-  "epochs": 15,
+  "epochs": 5,
   "seed": 42,
   "num_of_latent_layers": 3,
   "pred_dropout": 0.1,
@@ -12,6 +12,7 @@
   "hidden_units": 128,
   "emb_dropout": 0.1,
   "pos_tag_embedding_size": 5,
+  "use_bert": true,
   "classes": ["A0-B", "A0-I", "A1-B", "A1-I", "A2-B", "A2-I",
     "A3-B", "A3-I", "A4-B", "A4-I", "A5-B", "A5-I", "O", "P-B", "P-I"],
   "emb_filename": "../pretrained_word_embeddings/glove.6B.300d.txt"}

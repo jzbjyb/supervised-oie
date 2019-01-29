@@ -26,6 +26,7 @@ class TabReader(OieReader):
         sent, prob, pred, arg1, arg2, ...
         """
         d = {}
+        d_list = []
         ex_index = 0
         with open(fn) as fin:
             for line in fin:
@@ -54,8 +55,13 @@ class TabReader(OieReader):
                     arg = (arg[0], [arg_pos + i for i, w in enumerate(arg[0].split(' '))]) if len(arg) == 2 else arg[0]
                     curExtraction.addArg(arg, arg_pos)
 
-                d[text] = d.get(text, []) + [curExtraction]
+                if text not in d:
+                    d[text] = []
+                    d_list.append([])
+                d[text].append(curExtraction)
+                d_list[-1].append(curExtraction)
         self.oie = d
+        self.oie_list = d_list
 
 
 if __name__ == "__main__":

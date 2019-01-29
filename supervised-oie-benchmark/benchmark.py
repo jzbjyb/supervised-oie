@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--label=LABEL_FIEL] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--label=LABEL_FIEL] [--pos_weight=POS_WEIGHT] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -16,6 +16,7 @@ Options:
   --exactmatch                 Use exact match when judging whether an extraction is correct.
   --error                      Whether to perform error analysis.
   --label=LABEL_FILE           Whether to generate training data (in conll format) for confidence tuning.
+  --pos_weight=POS_WEIGHT      The weight of each positive sample [default: 1.0].
 '''
 import docopt
 import string
@@ -439,15 +440,33 @@ def f_beta(precision, recall, beta = 1):
 f1 = lambda precision, recall: f_beta(precision, recall, beta = 1)
 
 
-def gen_confidence_pointwise_samples(extractions, out_filepath):
-    heads = ['word_id', 'word', 'pred', 'pred_id', 'head_pred_id', 'sent_id', 'run_id', 'label', 'y']
+def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
+    '''
+    weight is the weight of each positive sample
+    '''
+    heads = ['word_id', 'word', 'pred', 'pred_id', 'head_pred_id', 'sent_id', 'run_id', 'label', 'y', 'weight']
+    pos_count, neg_count = 0, 0
+    for sent_id, sent in enumerate(extractions):
+        # for ext in extractions[sent]:
+        for ext in sent:
+            y = 1 if len(ext.matched) > 0 else 0
+            pos_count += y
+            neg_count += 1 - y
+    ratio = max(pos_count, neg_count) * 1.0 / min(pos_count, neg_count)
+    logging.info('pos samples {}, neg samples {}, ratio: {}'.format(pos_count, neg_count, ratio))
+    weight = pos_count * 1.0 / neg_count
+    logging.info('use weight {}'.format(weight))
     with open(out_filepath, 'w') as fout:
         fout.write('{}\n'.format('\t'.join(heads))) # write heads
         run_id = 0
         for sent_id, sent in enumerate(extractions):
-            for ext in extractions[sent]:
+            #for ext in extractions[sent]:
+            for ext in sent:
                 y = 1 if len(ext.matched) > 0 else 0
-                conll_str = ext.to_conll(sent_id=sent_id, run_id=run_id, append=[y])
+                pos_count += y
+                neg_count += 1 - y
+                w = float(weight) if y == 1 else 1.0
+                conll_str = ext.to_conll(sent_id=sent_id, run_id=run_id, append=[y, w])
                 fout.write('{}\n\n'.format(conll_str))
                 run_id += 1
 
@@ -529,7 +548,10 @@ if __name__ == '__main__':
               perfect_confidence=args['--perf_conf'])
     if args['--label']:
         # generate training data for confidence tuning
-        gen_confidence_pointwise_samples(compared_predicated1, args['--label'])
+        # remember to modify weight
+        pos_weight = float(args['--pos_weight'])
+        logging.info('use positive weight {}'.format(pos_weight))
+        gen_confidence_pointwise_samples(predicted_list[0].oie_list, args['--label'], weight=pos_weight)
     if not args['--error']:
         exit()
     b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)
