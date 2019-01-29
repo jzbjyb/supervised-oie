@@ -454,7 +454,7 @@ def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
             neg_count += 1 - y
     ratio = max(pos_count, neg_count) * 1.0 / min(pos_count, neg_count)
     logging.info('pos samples {}, neg samples {}, ratio: {}'.format(pos_count, neg_count, ratio))
-    weight = pos_count * 1.0 / neg_count
+    weight = neg_count * 1.0 / pos_count
     logging.info('use weight {}'.format(weight))
     with open(out_filepath, 'w') as fout:
         fout.write('{}\n'.format('\t'.join(heads))) # write heads

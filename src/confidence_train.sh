@@ -12,7 +12,7 @@ python ./trained_oie_extractor.py --model=${tag_model_dir} \
 pushd ../supervised-oie-benchmark
 python benchmark.py --gold=./oie_corpus/${split}.oie.orig.correct.head \
     --out=/dev/null --tabbed=${train_data_dir}/oie2016.${split}.txt \
-    --predArgHeadMatch --label=${train_data_dir}/oie2016.${split}.txt.conll
+    --predArgHeadMatch --label=${train_data_dir}/oie2016.${split}.txt.conll &&
 popd
 
 # train confidence model
