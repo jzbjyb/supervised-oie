@@ -458,7 +458,7 @@ def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
     logging.info('use weight {}'.format(weight))
     with open(out_filepath, 'w') as fout:
         fout.write('{}\n'.format('\t'.join(heads))) # write heads
-        run_id = 0
+        run_id, sent_id_start = 0, 0
         for sent_id, sent in enumerate(extractions):
             #for ext in extractions[sent]:
             for ext in sent:
@@ -466,7 +466,7 @@ def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
                 pos_count += y
                 neg_count += 1 - y
                 w = float(weight) if y == 1 else 1.0
-                conll_str = ext.to_conll(sent_id=sent_id, run_id=run_id, append=[y, w])
+                conll_str = ext.to_conll(sent_id=sent_id + sent_id_start, run_id=run_id, append=[y, w])
                 fout.write('{}\n\n'.format(conll_str))
                 run_id += 1
 
@@ -549,9 +549,17 @@ if __name__ == '__main__':
     if args['--label']:
         # generate training data for confidence tuning
         # remember to modify weight
+        use_filter = False
         pos_weight = float(args['--pos_weight'])
         logging.info('use positive weight {}'.format(pos_weight))
-        gen_confidence_pointwise_samples(predicted_list[0].oie_list, args['--label'], weight=pos_weight)
+        if use_filter:
+            filter_oie_list = [exts for exts in predicted_list[0].oie_list \
+                if len(exts) > 0 and exts[0].sent in b.gold]
+            logging.info('filter from {} sentences to {} sentences'.format(
+                len(predicted_list[0].oie_list), len(filter_oie_list)))
+        else:
+            filter_oie_list = predicted_list[0].oie_list
+        gen_confidence_pointwise_samples(filter_oie_list, args['--label'], weight=pos_weight)
     if not args['--error']:
         exit()
     b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)
