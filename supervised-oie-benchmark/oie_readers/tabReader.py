@@ -42,10 +42,11 @@ class TabReader(OieReader):
                 curExtraction = Extraction(pred=rel,
                                            pred_pos=pred_pos,
                                            head_pred_index=head_pred_index,
-                                           sent = text,
-                                           confidence = float(confidence),
-                                           question_dist = "./question_distributions/dist_wh_sbj_obj1.json",
-                                           index = ex_index)
+                                           sent=text,
+                                           confidence=float(confidence),
+                                           question_dist="./question_distributions/dist_wh_sbj_obj1.json",
+                                           index=ex_index,
+                                           raw=line.strip())
                 ex_index += 1
 
                 for arg in data[3:]:

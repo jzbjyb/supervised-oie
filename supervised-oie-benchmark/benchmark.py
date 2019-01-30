@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--label=LABEL_FIEL] [--pos_weight=POS_WEIGHT] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -16,6 +16,7 @@ Options:
   --exactmatch                 Use exact match when judging whether an extraction is correct.
   --error                      Whether to perform error analysis.
   --label=LABEL_FILE           Whether to generate training data (in conll format) for confidence tuning.
+  --label_format=LABEL_FORMAT  Which format to use in the output file [default: conll].
   --pos_weight=POS_WEIGHT      The weight of each positive sample [default: 1.0].
 '''
 import docopt
@@ -440,10 +441,12 @@ def f_beta(precision, recall, beta = 1):
 f1 = lambda precision, recall: f_beta(precision, recall, beta = 1)
 
 
-def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
+def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1, format='conll'):
     '''
     weight is the weight of each positive sample
     '''
+    if format not in {'conll', 'raw'}:
+        raise ValueError('format not supported')
     heads = ['word_id', 'word', 'pred', 'pred_id', 'head_pred_id', 'sent_id', 'run_id', 'label', 'y', 'weight']
     pos_count, neg_count = 0, 0
     for sent_id, sent in enumerate(extractions):
@@ -457,7 +460,8 @@ def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
     weight = neg_count * 1.0 / pos_count
     logging.info('use weight {}'.format(weight))
     with open(out_filepath, 'w') as fout:
-        fout.write('{}\n'.format('\t'.join(heads))) # write heads
+        if format == 'conll':
+            fout.write('{}\n'.format('\t'.join(heads))) # write heads
         run_id, sent_id_start = 0, 0
         for sent_id, sent in enumerate(extractions):
             #for ext in extractions[sent]:
@@ -466,8 +470,11 @@ def gen_confidence_pointwise_samples(extractions, out_filepath, weight=1):
                 pos_count += y
                 neg_count += 1 - y
                 w = float(weight) if y == 1 else 1.0
-                conll_str = ext.to_conll(sent_id=sent_id + sent_id_start, run_id=run_id, append=[y, w])
-                fout.write('{}\n\n'.format(conll_str))
+                if format == 'conll':
+                    conll_str = ext.to_conll(sent_id=sent_id + sent_id_start, run_id=run_id, append=[y, w])
+                    fout.write('{}\n\n'.format(conll_str))
+                elif format == 'raw':
+                    fout.write('{}\t{}\n'.format(y, ext.raw)) # prepand the label
                 run_id += 1
 
 
@@ -559,7 +566,8 @@ if __name__ == '__main__':
                 len(predicted_list[0].oie_list), len(filter_oie_list)))
         else:
             filter_oie_list = predicted_list[0].oie_list
-        gen_confidence_pointwise_samples(filter_oie_list, args['--label'], weight=pos_weight)
+        gen_confidence_pointwise_samples(filter_oie_list, args['--label'],
+            weight=pos_weight, format=args['--label_format'])
     if not args['--error']:
         exit()
     b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)

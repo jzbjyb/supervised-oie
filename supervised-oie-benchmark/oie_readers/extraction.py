@@ -12,7 +12,7 @@ class Extraction:
     """
     Stores sentence, single predicate and corresponding arguments.
     """
-    def __init__(self, pred, head_pred_index, sent, confidence, heads=None, question_dist = '', index = -1, pred_pos=None):
+    def __init__(self, pred, head_pred_index, sent, confidence, heads=None, question_dist = '', index = -1, pred_pos=None, raw=None):
         self.pred = pred
         self.pred_pos = pred_pos
         self.head_pred_index = head_pred_index
@@ -29,6 +29,7 @@ class Extraction:
         self.is_mwp = False
         self.question_dist = question_dist
         self.index = index
+        self.raw = raw # the original line in the file
 
     @staticmethod
     def position_contain(x, y):
