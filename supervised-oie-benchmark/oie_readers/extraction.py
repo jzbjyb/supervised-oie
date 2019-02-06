@@ -7,6 +7,7 @@ import itertools
 import logging
 import numpy as np
 import pdb
+import pandas as pd
 
 class Extraction:
     """
@@ -39,6 +40,98 @@ class Extraction:
         if x[0] >= y[0] and x[-1] <= y[-1]:
             return True
         return False
+
+    @staticmethod
+    def get_sents_from_df(df):
+        dfv = df.values
+        col = df.columns.values.tolist()
+        ridx = col.index('run_id')
+        df_li = []
+        last_idx = 0
+        for i in range(1, len(dfv)):
+            if dfv[i, ridx] != dfv[i-1, ridx]:
+                sdf = pd.DataFrame(dfv[last_idx:i], columns=df.columns)
+                df_li.append(sdf)
+                last_idx = i
+        if len(dfv) > 0:
+            sdf = pd.DataFrame(dfv[last_idx:], columns=df.columns)
+            df_li.append(sdf)
+        return df_li
+
+    @staticmethod
+    def combine_conll(fn1, fn2, out_fn, gold_fn=None):
+        '''
+        Combine two conll files (sent_id, run_id, and weight need to be modified)
+        '''
+        # merge two files
+        df1 = pd.read_csv(fn1, sep='\t', header=0, keep_default_na=False, quoting=3)
+        df2 = pd.read_csv(fn2, sep='\t', header=0, keep_default_na=False, quoting=3)
+        for df in [df1, df2]:
+            if 'y' not in df.columns:
+                df['y'] = 1 # default is positive
+            if 'weight' not in df.columns:
+                df['weight'] = 1.0
+        df1s = Extraction.get_sents_from_df(df1)
+        df2s = Extraction.get_sents_from_df(df2)
+        result = defaultdict(lambda: {})
+        sent_li = []
+        pos, neg = 0, 0
+        for df in df1s + df2s:
+            sent = ' '.join(df.word.values)
+            label = ' '.join(df.label.values)
+            y = df.y.values[0]
+            if sent not in result:
+                sent_li.append(sent)
+            if label in result[sent]:
+                continue # skip redundant samples
+            pos += y == 1
+            neg += y == 0
+            result[sent][label] = df
+        weight = neg * 1.0 / (pos or 1)
+        print('#sentence: {}'.format(len(sent_li)))
+        n_sam = np.sum([len(result[k]) for k in result])
+        print('#samples: {} + {} -> {} / {} = {}'.format(
+            len(df1s), len(df2s), len(df1s) + len(df2s), n_sam, (len(df1s) + len(df2s)) * 1.0 / n_sam))
+        print('weight: {} / {} = {}'.format(neg, pos, weight))
+        column_list = df1.columns.values.tolist()
+        up_df = {'v': 0,
+                'sent_id': column_list.index('sent_id'),
+                'run_id': column_list.index('run_id'),
+                'weight': column_list.index('weight')}
+        def update_df(df, sidx, wei=None):
+            # direct updating dataframe is intolerantly slow
+            dfv = df.values
+            dfv[:, up_df['sent_id']] = sidx
+            dfv[:, up_df['run_id']] = up_df['v']
+            if wei is not None:
+                dfv[:, up_df['weight']] = wei
+            up_df['v'] += 1
+            return pd.DataFrame(dfv, columns=df.columns)
+        def get_weight(df, wei):
+            if df.y.values[0] == 0:
+                return 1.0
+            return wei
+        result = [update_df(result[s][l], sidx, wei=get_weight(result[s][l], weight))
+                  for sidx, s in enumerate(sent_li) for l in result[s]]
+
+        # use ground truth file
+        if gold_fn:
+            gt = pd.read_csv(gold_fn, sep='\t', header=0, keep_default_na=False, quoting=3)
+            gt['y'] = 2
+            gt['weight'] = 1.0
+            gts = Extraction.get_sents_from_df(gt)
+            gt_weight = 2 * neg * 1.0 / len(gts)
+            print('use ground truth file with weight: {}'.format(gt_weight))
+            for df in gts:
+                result.append(update_df(df, -1, wei=gt_weight))
+
+        # save
+        if len(result) == 0:
+            return
+        with open(out_fn, 'w') as fout:
+            fout.write(result[0].to_csv(sep='\t', index=False, quoting=3, header=True))
+            for df in result[1:]:
+                fout.write('\n{}'.format(df.to_csv(sep='\t', index=False, quoting=3, header=False)))
 
     def to_conll(self, sent_id=0, run_id=0, append=[]):
         '''

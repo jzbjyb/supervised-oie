@@ -12,7 +12,7 @@ from docopt import docopt
 import keras
 from keras.models import Sequential, Model
 from keras.layers import Input, Dense, LSTM, Embedding, \
-    TimeDistributed, merge, Bidirectional, Dropout, Reshape, Multiply, Lambda
+    TimeDistributed, merge, Bidirectional, Dropout, Reshape, Multiply, Lambda, Add
 from keras.layers.merge import concatenate
 from keras.wrappers.scikit_learn import KerasClassifier
 from keras.utils import np_utils
@@ -35,6 +35,8 @@ from parsers.spacy_wrapper import spacy_whitespace_parser as spacy_ws
 from keras_bert import load_trained_model_from_checkpoint
 from beam_search import TaggingPredict, beamsearch
 import keras.backend as K
+from tensorflow.python.ops import clip_ops
+from tensorflow.python.framework import ops
 
 import json
 import pdb
@@ -63,6 +65,7 @@ class RNN_model:
     """
     Represents an RNN model for supervised OIE
     """
+    SPE_Y = 2
     def __init__(self, sent_maxlen = None, emb_filename = None,
                  batch_size = 5, seed = 42, sep = '\t',
                  hidden_units = pow(2, 7),trainable_emb = True,
@@ -134,14 +137,15 @@ class RNN_model:
                 self.model_fn = self.set_model_from_file
             self.train = self.train_tagging_model
         elif self.model_type == 'conf':
+            self.alpha = 1.0 # control trade-off between mle and hinge loss
             self.model_fn = self.set_confidence_pointwise_model
             self.train = self.train_confidence_pointwise_model
             # save_type decides which model to save
             # 1. 'tag' is to load and save the tagging model
             # 2. 'conf' is to load and save the confidence model
-            # 3. 'tag-conf' is to load tagging model and save confidence model
+            # 3. 'tag_conf' is to load tagging model and save confidence model
             self.save_type = save_type
-            if self.save_type not in {'tag', 'conf', 'tag-conf'}:
+            if self.save_type not in {'tag', 'conf', 'tag_conf'}:
                 raise ValueError('save_type not supported')
 
         np.random.seed(self.seed)
@@ -231,21 +235,50 @@ class RNN_model:
     def tag_model_to_sentence_score(self, tag_inputs, mask_inputs, tag_true):
         # SHAPE: (None, sent_maxlen, num_class)
         tag_prob = self.model(tag_inputs)
+        # clip prob
+        def clip(prob):
+            epsilon_ = ops.convert_to_tensor(K.epsilon(), dtype='float32')
+            prob = clip_ops.clip_by_value(prob, epsilon_, 1. - epsilon_)
+            return prob
+        tag_prob = Lambda(clip)(tag_prob)
+        # log prob
+        tag_prob = Lambda(lambda x: K.log(x))(tag_prob)
         # SHAPE: (None, sent_maxlen)
         cast_to_float32 = Lambda(lambda x: K.cast(x, 'float32'))
-        tag_prob = Multiply()([cast_to_float32(tag_true), Lambda(lambda x: K.log(x))(tag_prob)])
+        tag_prob = Multiply()([cast_to_float32(tag_true), tag_prob])
         # SHAPE: (None, sent_maxlen)
         tag_prob = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob)
         reshape_sent = Lambda(lambda x: K.reshape(x, (-1, self.max_subsent * self.sent_maxlen)))
+        # SHAPE: (None, max_subsent * sent_maxlen)
         mask_inputs = cast_to_float32(reshape_sent(mask_inputs))
+        # SHAPE: (None, max_subsent * sent_maxlen)
         tag_prob = reshape_sent(tag_prob)
         # SHAPE: (None, max_subsent * sent_maxlen)
         tag_prob = Multiply()([mask_inputs, tag_prob])
-        mask_inputs = Lambda(lambda x: K.sum(x, axis=-1))(mask_inputs)
-        sent_score = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob)
         # SHAPE: (None,)
-        sent_score = Lambda(lambda x: x[0] / x[1])([sent_score, mask_inputs])
-        return sent_score
+        mask_inputs = Lambda(lambda x: K.sum(x, axis=-1))(mask_inputs)
+        # SHAPE: (None,)
+        tag_prob_sum = Lambda(lambda x: K.sum(x, axis=-1))(tag_prob) # sum log prob
+        # SHAPE: (None,)
+        tag_prob_avg = Lambda(lambda x: x[0] / x[1])([tag_prob_sum, mask_inputs]) # avg log prob
+        tag_prob_sum_norm = Lambda(lambda x: x[0] / K.mean(x[1]))(
+            [tag_prob_sum, mask_inputs]) # sum log prob normalized by average seq len
+        return tag_prob_avg, tag_prob_sum_norm
+
+    def mle_hinge_loss(self):
+        '''
+        Final loss is alpha * mle + hinge
+        '''
+        def cus_loss(y_true, y_pred):
+            ms = K.cast(K.equal(y_true, RNN_model.SPE_Y), dtype=y_pred.dtype) # mle samples
+            hs = 1 - ms # hinge samples
+            # mle loss (nll loss)
+            mle = -K.mean(y_pred * ms, axis=-1) # y_pred is sum of log prob
+            # hinge loss
+            hl =  K.mean(K.maximum(1. - y_true * y_pred, 0.) * hs, axis=-1)
+            loss = self.alpha * mle + hl
+            return loss
+        return cus_loss
 
     def set_confidence_pointwise_model(self):
         # sentence-level inputs and subsentence-level input shapes
@@ -274,25 +307,35 @@ class RNN_model:
         mask_inputs = sub_inputs[-2]
         sub_inputs = sub_inputs[:-2]
 
+        # sentence-level inputs
+        loss_ind = Input(shape=(1,), dtype="int32", name="loss_ind") # indicate whether to use mle loss
+        inputs.append(loss_ind)
+        loss_ind = Lambda(lambda x: K.cast(K.equal(x, RNN_model.SPE_Y), dtype='float32'))(loss_ind)
+
         # build or load original tagging model
         if self.restore_dir is None:
             self.set_vanilla_model(dump_json=False)
-        elif self.save_type == 'tag' or self.save_type == 'tag-conf':
+        elif self.save_type == 'tag' or self.save_type == 'tag_conf':
             self.set_model_from_file()
         elif self.save_type == 'conf':
             self.set_vanilla_model(dump_json=False)
 
         # get sentence score
-        sent_score = self.tag_model_to_sentence_score(sub_inputs, mask_inputs, tag_true)
+        avg_log_prob, sum_log_prob = self.tag_model_to_sentence_score(sub_inputs, mask_inputs, tag_true)
+        avg_log_prob = Reshape((1,))(avg_log_prob)
+        sum_log_prob = Reshape((1,))(sum_log_prob)
 
-        # get loss
-        sent_score = Reshape((1,))(sent_score)
-        sent_score = Dense(1, activation=None, use_bias=True)(sent_score)  # linear layer
+        # get output for loss
+        avg_log_prob = Dense(1, activation=None, use_bias=True)(avg_log_prob)  # linear layer
+        output = Multiply()([sum_log_prob, loss_ind])
+        output = Add()([output, Multiply()([avg_log_prob, Lambda(lambda x: 1-x)(loss_ind)])])
 
         # build and compile model
-        new_model = Model(input=inputs, output=[sent_score])
-        opt = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False, clipnorm=0.00001)
-        new_model.compile(optimizer=opt, loss='hinge', metrics=['hinge'])
+        new_model = Model(input=inputs, output=[output])
+        #opt = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False, clipnorm=0.00001)
+        #new_model.compile(optimizer=opt, loss='hinge', metrics=['hinge'])
+        mh_loss = self.mle_hinge_loss()
+        new_model.compile(optimizer='adam', loss=mh_loss, metrics=[mh_loss])
         if self.restore_dir is not None and self.save_type == 'conf':
             new_model.load_weights(os.path.join(self.restore_dir, 'weights.hdf5'))
         else:
@@ -305,12 +348,14 @@ class RNN_model:
         X_train['tag_true'] = Y_train
         X_train = self.dataset_to_sentence_level(X_train)
         Y_train = self.load_dataset_y(train_fn, mode='hinge')
+        X_train['loss_ind'] = Y_train
         X_weight = self.load_dataset_weight(train_fn)
         # load dev dataset
         X_dev, Y_dev = self.load_dataset(dev_fn, pad_sent=True)
         X_dev['tag_true'] = Y_dev
         X_dev = self.dataset_to_sentence_level(X_dev)
         Y_dev = self.load_dataset_y(dev_fn, mode='hinge')
+        X_dev['loss_ind'] = Y_dev
 
         new_model = self.model_fn()
 
@@ -319,7 +364,7 @@ class RNN_model:
             #self.save_model_to_file(os.path.join(self.model_dir, "model.json"))
             if self.save_type == 'tag':
                 self.model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
-            elif self.save_type == 'conf' or self.save_type == 'tag-conf':
+            elif self.save_type == 'conf' or self.save_type == 'tag_conf':
                 new_model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
         callback = LambdaCallback(on_epoch_end=lambda epoch, logs: save_model()) # only save tagging model
         new_model.fit(X_train, Y_train, batch_size=self.batch_size,
@@ -440,7 +485,7 @@ class RNN_model:
                  if word.tag_.startswith("V")]
 
         # Calculate num of samples (round up to the nearst multiple of sent_maxlen)
-        num_of_samples = np.ceil(float(len(sent)) / self.sent_maxlen) * self.sent_maxlen
+        num_of_samples = np.ceil(float(len(sent)) / self.sent_maxlen) * self.sent_maxlen # TODO: python2 divide bug
         num_of_samples = int(num_of_samples)
 
         # Run RNN for each predicate on this sentence
@@ -478,6 +523,7 @@ class RNN_model:
         X_test['tag_true'] = Y_test
         X_test = self.dataset_to_sentence_level(X_test)
         Y_test = self.load_dataset_y(test_fn, mode='hinge')
+        X_test['loss_ind'] = np.zeros_like(Y_test)
 
         new_model = self.model_fn()
 
@@ -531,7 +577,7 @@ class RNN_model:
             y = np.array([int(sent.y.values[0]) for sent in sents])
         elif mode == 'hinge': # +1 -1
             y = np.array([(lambda x: x if x != 0 else -1)(int(sent.y.values[0])) for sent in sents])
-        return y
+        return y.reshape((-1, 1))
 
     def dataset_to_sentence_level(self, X):
         def to_new_shape(x):
@@ -560,6 +606,22 @@ class RNN_model:
         return (X, Y)
 
     def get_sents_from_df(self, df):
+        dfv = df.values
+        col = df.columns.values.tolist()
+        ridx = col.index('run_id')
+        df_li = []
+        last_idx = 0
+        for i in range(1, len(dfv)):
+            if dfv[i, ridx] != dfv[i-1, ridx]:
+                sdf = pandas.DataFrame(dfv[last_idx:i], columns=df.columns)
+                df_li.append(sdf)
+                last_idx = i
+        if len(dfv) > 0:
+            sdf = pandas.DataFrame(dfv[last_idx:], columns=df.columns)
+            df_li.append(sdf)
+        return df_li
+
+    def get_sents_from_df_slow(self, df):
         """
         Split a data frame by rows accroding to the sentences
         """
@@ -574,7 +636,7 @@ class RNN_model:
         """
         if pad_sent and not hasattr(self, 'max_subsent'):
             # split sentence into equal numbers of subsentence
-            self.max_subsent = np.max([np.ceil(len(sent) / self.sent_maxlen) for sent in sents])
+            self.max_subsent = np.max([np.ceil(len(sent) / self.sent_maxlen) for sent in sents]) # TODO: python2 divide bug
             self.max_subsent = int(self.max_subsent)
             logging.debug('max_subsent is {}'.format(self.max_subsent))
         if not pad_sent:
@@ -647,8 +709,7 @@ class RNN_model:
             preds = [0] * len(words)
             preds[self.get_head_pred_word_pos(sent)] = 1
             # get pos
-            for index, word in zip(indices,
-                                   spacy_ws(" ".join(words))):
+            for index, word in zip(indices, spacy_ws(" ".join(words))):
                 word_id_to_pos[index] = word.tag_
             poss = [word_id_to_pos[index] for index in indices] # poss has the same length as words
             # tokenize (mainly for bert with use sub words)
