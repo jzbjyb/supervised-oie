@@ -1,10 +1,10 @@
 {"rnn":{
   "model_type": "conf",
-  "save_type": "tag-conf",
+  "save_type": "tag",
   "sent_maxlen": 20,
   "sep": "\t",
-  "batch_size": 50,
-  "epochs": 15,
+  "batch_size": 128,
+  "epochs": 10,
   "seed": 42,
   "num_of_latent_layers": 3,
   "pred_dropout": 0.1,

@@ -137,7 +137,7 @@ class RNN_model:
                 self.model_fn = self.set_model_from_file
             self.train = self.train_tagging_model
         elif self.model_type == 'conf':
-            self.alpha = 1.0 # control trade-off between mle and hinge loss
+            self.alpha = 8.0 # control trade-off between mle and hinge loss
             self.model_fn = self.set_confidence_pointwise_model
             self.train = self.train_confidence_pointwise_model
             # save_type decides which model to save
