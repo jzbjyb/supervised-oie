@@ -45,6 +45,7 @@ import logging
 logging.basicConfig(level = logging.DEBUG)
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
@@ -366,11 +367,12 @@ class RNN_model:
                 self.model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
             elif self.save_type == 'conf' or self.save_type == 'tag_conf':
                 new_model.save_weights(os.path.join(self.model_dir, 'weights.hdf5'))
-        callback = LambdaCallback(on_epoch_end=lambda epoch, logs: save_model()) # only save tagging model
+        save_cb = LambdaCallback(on_epoch_end=lambda epoch, logs: save_model()) # only save tagging model
+        early_stop_cb = keras.callbacks.EarlyStopping(monitor='val_loss', patience=2, mode='min')
         new_model.fit(X_train, Y_train, batch_size=self.batch_size,
                       sample_weight=X_weight,
                       epochs=self.epochs,
-                      callbacks=[callback],
+                      callbacks=[save_cb, early_stop_cb],
                       validation_data=(X_dev, Y_dev))
 
     def train_confidence_pairwise_model(self, train_fn, dev_fn):
@@ -1172,7 +1174,7 @@ if __name__ == "__main__":
 
         # save and restore path
         if args["--saveto"] is not None:
-            model_dir = os.path.join(args["--saveto"], "{}/".format(time.strftime("%d_%m_%Y_%H_%M")))
+            model_dir = args["--saveto"]
         else:
             model_dir = "../models/{}/".format(time.strftime("%d_%m_%Y_%H_%M"))
         if not os.path.exists(model_dir):
