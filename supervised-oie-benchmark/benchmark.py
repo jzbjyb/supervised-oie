@@ -54,6 +54,22 @@ indenter = textwrap.TextWrapper(initial_indent='\t', width=100,
     subsequent_indent='\t')
 pp = pprint.PrettyPrinter(indent=4)
 
+def _remove_leading_zero(value, string):
+    if 1 > value > -1:
+        string = string.replace('0', '', 1)
+    return string
+
+class MyFloat(float):
+    def __format__(self, format_string):
+        if format_string.endswith('z'):  # 'fz' is format sting for floats without leading the zero
+            format_string = format_string[:-1]
+            remove_leading_zero = True
+        else:
+            remove_leading_zero = False
+
+        string = super(MyFloat, self).__format__(format_string)
+        return _remove_leading_zero(self, string) if remove_leading_zero else string
+
 class ColoredExtraction(object):
     def __init__(self, extraction):
         self.extraction = extraction
@@ -352,8 +368,10 @@ class Benchmark:
         # r' * (|True in what's covered by extractor| / |True in gold|) = |true in what's covered| / |true in gold|
         (p, r), optimal = Benchmark.prCurve(np.array(y_true), np.array(y_scores),
                                             recallMultiplier = ((correctTotal - unmatchedCount)/float(correctTotal)))
-        logging.info("AUC: {}\n Optimal (precision, recall, F1, threshold): {}".format(auc(r, p),
-                                                                                       optimal))
+        auc_score = auc(r, p)
+        logging.info("AUC: {}\n Optimal (precision, recall, F1, threshold): {}".format(
+            auc_score, optimal))
+        print(" {:.3fz} {:.3fz}".format(MyFloat(auc_score), MyFloat(optimal[-2])))
 
         # Write error log to file
         if error_file:
