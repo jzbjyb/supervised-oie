@@ -31,6 +31,7 @@ if __name__ == '__main__':
 
     df = pd.read_csv(opt.inp, sep='\t', header=0, keep_default_na=False, quoting=3)
     sents = Extraction.get_sents_from_df(df)
+    useless_n_sam = 0
     with open(opt.out, 'w') as fout:
         for sent in sents:
             words = sent.word.values
@@ -50,5 +51,9 @@ if __name__ == '__main__':
                     args[ai].append((w, i))
             pred_str = pred_to_openie4(pred, words)
             args_str = [arg_to_openie4(arg, words) for arg in args if len(arg) > 0]
+            if len(args_str) <= 0 or len(pred) <= 0:
+                useless_n_sam += 1
+                continue
             fout.write('{}\t\t{}\t{}\t{}\t{}\n'.format(
                 0, args_str[0], pred_str, ';'.join(args_str[1:]), sent))
+    print('totally {} useless samples'.format(useless_n_sam))
