@@ -3,18 +3,24 @@ import pandas as pd
 from operator import itemgetter
 from oie_readers.extraction import Extraction
 
+def len_in_char(text, encoding='utf8'):
+    if type(text) is str:
+        text = text.decode(encoding)
+    if type(text) is not unicode:
+        raise ValueError
+    return len(text)
 
 def arg_to_openie4(sub_tokens, tokens):
-    st = len(' '.join(tokens[:sub_tokens[0][1]])) + (sub_tokens[0][1] > 0)
+    st = len_in_char(' '.join(tokens[:sub_tokens[0][1]])) + (sub_tokens[0][1] > 0)
     sub = ' '.join(map(itemgetter(0), sub_tokens))
-    ed = st + len(sub)
+    ed = st + len_in_char(sub)
     return '{}({},List([{}, {})))'.format('SimpleArgument', sub, st, ed)
 
 def pred_to_openie4(sub_tokens, tokens):
     sts, eds = [], []
     for w in sub_tokens:
-        st = len(' '.join(tokens[:w[1]])) + (w[1] > 0)
-        ed = st + len(w[0])
+        st = len_in_char(' '.join(tokens[:w[1]])) + (w[1] > 0)
+        ed = st + len_in_char(w[0])
         sts.append(st)
         eds.append(ed)
     return '{}({},List({}))'.format(
