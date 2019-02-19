@@ -169,6 +169,9 @@ class Benchmark:
         '''
         ana1, 2
         '''
+        p1_avg_arg = np.mean([len(e.args) for s in predicted1 for e in predicted1[s]])
+        p2_avg_arg = np.mean([len(e.args) for s in predicted2 for e in predicted2[s]])
+        print('avg num of args {}:{}'.format(p1_avg_arg, p2_avg_arg))
         print('both correct: {}'.format(len([(s, e) for s in self.gold for e in self.gold[s] 
             if (tag1 in e.aligned and tag2 in e.aligned)])))
         print(self.get_ana_banner(1))
@@ -588,7 +591,7 @@ if __name__ == '__main__':
             weight=pos_weight, format=args['--label_format'])
     if not args['--error']:
         exit()
-    b.error_ana_uni(compared_predicated1, tag='sys1', showcase=5)
+    b.error_ana_uni(compared_predicated1, tag='sys1', showcase=10)
     if len(predicted_list) > 1:
         compared_predicated2 = b.compare(predicted = predicted_list[1].oie, tag='sys2',
               matchingFunc = matchingFunc,

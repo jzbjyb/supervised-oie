@@ -1,3 +1,5 @@
+#!/bin/bash
+
 out_dir=$1
 args=$2
 
