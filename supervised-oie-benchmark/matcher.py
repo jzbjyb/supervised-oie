@@ -160,6 +160,27 @@ class Matcher:
                 if ind < 0:
                     return False, 0
         return True, 1
+    
+    @staticmethod
+    def argHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase):
+        for head in ref.heads[1:]:
+            matched = False
+            for i, arg in enumerate(ex.args):
+                if type(head) is tuple and type(arg) is tuple:
+                    # use position to evaluate
+                    if Extraction.position_contain(head[1], arg[1]):
+                        matched = True
+                        break
+                else:
+                    # use str to evaluate
+                    arg = ' ' + ex.elementToStr(arg, print_indices=False) + ' '
+                    ind = arg.find(' ' + ref.elementToStr(head, print_indices=False) + ' ')
+                    if ind >= 0:
+                        matched = True
+                        break
+            if not matched:
+                return False, 0
+        return True, 1
 
     @staticmethod
     def bleuMatch(ref, ex, ignoreStopwords, ignoreCase):
@@ -208,6 +229,12 @@ class Matcher:
     def predArgHeadMatch(ref, ex, ignoreStopwords, ignoreCase):
         pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
         arg, arg_score = Matcher.argHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        return pred and arg, min(pred_score, arg_score)
+
+    @staticmethod
+    def predArgHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase):
+        pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase)
         return pred and arg, min(pred_score, arg_score)
 
     @staticmethod
