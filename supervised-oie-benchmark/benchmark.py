@@ -45,6 +45,7 @@ from oie_readers.tabReader import TabReader
 from oie_readers.goldReader import GoldReader
 from matcher import Matcher
 from operator import itemgetter
+from collections import defaultdict
 
 SEED = 2019
 random.seed(SEED)
@@ -122,6 +123,43 @@ class ColoredExtraction(object):
                         break
             result.append(ch)
         return ''.join(result)[1:-1]
+
+def combine_ex_and_gt(ex_fn, gt_fn, out_fn):
+    exs = defaultdict(lambda: [])
+    gts = defaultdict(lambda: [])
+    sents = []
+    with open(ex_fn, 'r') as ex_fin, open(gt_fn, 'r') as gt_fin:
+        for l in ex_fin:
+            l = l.strip()
+            l = l.split('\t')
+            sent = l[1]
+            label = l[0]
+            score = l[2]
+            os = [o if o.find('##') == -1 else o[:o.find('##')] for o in l[3:]]
+            exs[sent].append('{}\t{:.3f}\t{}'.format('\t'.join(os), float(score), label))
+        for l in gt_fin:
+            l = l.strip()
+            l = l.split('\t')
+            sent = l[0]
+            os = l[1:]
+            if sent not in sents:
+                sents.append(sent)
+            gts[sent].append('{}'.format('\t'.join(os)))
+    exs = dict(exs)
+    gts = dict(gts)
+    with open(out_fn, 'w') as fout:
+        for sent in sents:
+            fout.write('{}\n'.format(sent))
+            fout.write('\t----- GOLD STANDARD -----\n')
+            for gt in gts[sent]:
+                fout.write('\t{}\n'.format(gt))
+            if sent in exs:
+                fout.write('\t----- SYS EXTRACTIONS -----\n')
+                for ex in exs[sent]:
+                    fout.write('\t{}\n'.format(ex))
+            else:
+                print('no ext')
+                fout.write('\t----- NO SYS EXTRACTIONS -----\n')
 
 def reorder(sent_fn, gt_fn):
     '''
