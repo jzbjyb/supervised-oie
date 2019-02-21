@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch | --predArgHeadMatchRelex | --predArgHeadMatchExclude] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--skip_no_pred] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch | --predArgHeadMatchRelex | --predArgHeadMatchExclude] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--skip_no_pred] [--skip_no_gt_pred] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -147,8 +147,13 @@ def reorder(sent_fn, gt_fn):
                 gt[ss] = []
             gt[ss].append(s)
     print('{} unique sent from {}'.format(len(np.unique(sl)), len(sl)))
+    visited = set()
     with open(gt_fn + '.reorder', 'w') as gt_out:
-        for s in np.unique(sl):
+        for s in sl:
+            if s in visited:
+                continue
+            else:
+                visited.add(s)
             if s not in gt:
                 print('{}'.format(s))
                 print('NO GT')
@@ -319,7 +324,7 @@ class Benchmark:
 
 
     def compare(self, predicted, tag, matchingFunc, output_fn, error_file = None, num_args=None, 
-        perfect_confidence=False, skip_no_pred=False):
+        perfect_confidence=False, skip_no_pred=False, skip_no_gt_pred=False):
         ''' Compare gold against predicted using a specified matching function.
             Outputs PR curve to output_fn '''
 
@@ -352,6 +357,7 @@ class Benchmark:
                 # only consider extractions with desired number of args
                 if num_args is not None and len(goldEx.args) not in num_args:
                         continue
+                # only consider ground truth predicates extracted by the system
                 found_pred = False
                 for j, predictedEx in enumerate(predictedExtractions):
                     pred_match, _ = Matcher.predHeadMatch(goldEx, predictedEx,
@@ -370,6 +376,17 @@ class Benchmark:
                 for j, predictedEx in enumerate(predictedExtractions):
                     # only consider extractions with desired number of args
                     if num_args is not None and len(predictedEx.args) not in num_args:
+                            continue
+                    # only consider extractions with predicates contained by ground truth
+                    found_pred = False
+                    for k, goldEx2 in enumerate(goldExtractions):
+                        pred_match, _ = Matcher.predHeadMatch(goldEx2, predictedEx,
+                                                              ignoreStopwords=True, ignoreCase=True)
+                        if pred_match:
+                            found_pred = True
+                            break
+                    if not found_pred:
+                        if skip_no_gt_pred:
                             continue
                     if len(predictedEx.matched) > 0:
                         # This predicted extraction was already matched against a gold extraction
@@ -629,7 +646,8 @@ if __name__ == '__main__':
               error_file = args["--error-file"],
               num_args=num_args,
               perfect_confidence=args['--perf_conf'],
-              skip_no_pred=args['--skip_no_pred'])
+              skip_no_pred=args['--skip_no_pred'],
+              skip_no_gt_pred=args['--skip_no_gt_pred'],)
     if args['--label']:
         # generate training data for confidence tuning
         # remember to modify weight
