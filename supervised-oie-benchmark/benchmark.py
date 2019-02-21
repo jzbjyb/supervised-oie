@@ -123,6 +123,40 @@ class ColoredExtraction(object):
             result.append(ch)
         return ''.join(result)[1:-1]
 
+def reorder(sent_fn, gt_fn):
+    '''
+    reorder ground truth file for easy comparison
+    '''
+    sl = []
+    with open(sent_fn, 'r') as sent_fin:
+        for s in sent_fin:
+            s = s.strip()
+            if s == '':
+                continue
+            sl.append(s)
+    gt = {}
+    ln = 0
+    with open(gt_fn, 'r') as gt_fin:
+        for s in gt_fin:
+            ln += 1
+            s = s.strip()
+            if s == '':
+                continue
+            ss = s.split('\t')[0]
+            if ss not in gt:
+                gt[ss] = []
+            gt[ss].append(s)
+    print('{} unique sent from {}'.format(len(np.unique(sl)), len(sl)))
+    with open(gt_fn + '.reorder', 'w') as gt_out:
+        for s in np.unique(sl):
+            if s not in gt:
+                print('{}'.format(s))
+                print('NO GT')
+                continue
+            for e in gt[s]:
+                gt_out.write('{}\n'.format(e))
+    print('#line: {}'.format(ln))
+
 class Benchmark:
     ''' Compare the gold OIE dataset against a predicted equivalent '''
     def __init__(self, gold_fn):
