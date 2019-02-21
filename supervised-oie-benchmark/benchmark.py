@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch | --predArgHeadMatchRelex] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch | --predArgHeadMatchRelex | --predArgHeadMatchExclude] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--skip_no_pred] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -285,7 +285,7 @@ class Benchmark:
 
 
     def compare(self, predicted, tag, matchingFunc, output_fn, error_file = None, num_args=None, 
-        perfect_confidence=False):
+        perfect_confidence=False, skip_no_pred=False):
         ''' Compare gold against predicted using a specified matching function.
             Outputs PR curve to output_fn '''
 
@@ -295,6 +295,7 @@ class Benchmark:
 
         correctTotal = 0
         unmatchedCount = 0
+        pred_unmatchedCount = 0
 
         # It seems that we don't need normalize
         #predicted = Benchmark.normalizeDict(predicted)
@@ -308,6 +309,7 @@ class Benchmark:
                     if num_args is not None and len(goldEx.args) not in num_args:
                         continue
                     unmatchedCount += len(goldExtractions)
+                    pred_unmatchedCount += len(goldExtractions)
                     correctTotal += len(goldExtractions)
                 continue
 
@@ -315,6 +317,17 @@ class Benchmark:
             for i, goldEx in enumerate(goldExtractions):
                 # only consider extractions with desired number of args
                 if num_args is not None and len(goldEx.args) not in num_args:
+                        continue
+                found_pred = False
+                for j, predictedEx in enumerate(predictedExtractions):
+                    pred_match, _ = Matcher.predHeadMatch(goldEx, predictedEx,
+                                                          ignoreStopwords=True, ignoreCase=True)
+                    if pred_match:
+                        found_pred = True
+                        break
+                if not found_pred:
+                    pred_unmatchedCount += 1
+                    if skip_no_pred:
                         continue
 
                 correctTotal += 1
@@ -374,6 +387,8 @@ class Benchmark:
         auc_score = auc(r, p)
         logging.info("AUC: {}\n Optimal (precision, recall, F1, threshold): {}".format(
             auc_score, optimal))
+        print("{} out of {} predicates are not extracted".format(pred_unmatchedCount, correctTotal))
+        print("{} out of {} gt are not extracted".format(unmatchedCount, correctTotal))
         print(" {:.3fz} {:.3fz}".format(MyFloat(auc_score), MyFloat(optimal[-2])))
 
         # Write error log to file
@@ -561,6 +576,9 @@ if __name__ == '__main__':
     elif args['--predArgHeadMatchRelex']:
         matchingFunc = Matcher.predArgHeadMatchRelex
 
+    elif args['--predArgHeadMatchExclude']:
+        matchingFunc = Matcher.predArgHeadMatchExclude
+
     else:
         matchingFunc = Matcher.lexicalMatch
 
@@ -576,7 +594,8 @@ if __name__ == '__main__':
               output_fn = out_filename,
               error_file = args["--error-file"],
               num_args=num_args,
-              perfect_confidence=args['--perf_conf'])
+              perfect_confidence=args['--perf_conf'],
+              skip_no_pred=args['--skip_no_pred'])
     if args['--label']:
         # generate training data for confidence tuning
         # remember to modify weight

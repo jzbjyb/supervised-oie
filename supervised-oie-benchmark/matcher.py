@@ -183,6 +183,24 @@ class Matcher:
         return True, 1
 
     @staticmethod
+    def argHeadMatchExclude(ref, ex, ignoreStopwords, ignoreCase):
+        if len(ref.args) > len(ex.args):
+            return False, 0
+        for i, head in enumerate(ref.heads[1:]):
+            arg = ex.args[i]
+            if type(head) is tuple and type(arg) is tuple:
+                # use position to evaluate
+                if not Extraction.position_contain(head[1], arg[1]):
+                    return False, 0
+            else:
+                # use str to evaluate
+                arg = ' ' + ex.elementToStr(arg, print_indices=False) + ' '
+                ind = arg.find(' ' + ref.elementToStr(head, print_indices=False) + ' ')
+                if ind < 0:
+                    return False, 0
+        return True, 1
+
+    @staticmethod
     def bleuMatch(ref, ex, ignoreStopwords, ignoreCase):
         sRef = ref.bow()
         sEx = ex.bow()
@@ -235,6 +253,12 @@ class Matcher:
     def predArgHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase):
         pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
         arg, arg_score = Matcher.argHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase)
+        return pred and arg, min(pred_score, arg_score)
+
+    @staticmethod
+    def predArgHeadMatchExclude(ref, ex, ignoreStopwords, ignoreCase):
+        pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argHeadMatchExclude(ref, ex, ignoreStopwords, ignoreCase)
         return pred and arg, min(pred_score, arg_score)
 
     @staticmethod
