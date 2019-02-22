@@ -34,6 +34,7 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     most_n_args = 6
+    SEP = '|;|;|'
 
     df = pd.read_csv(opt.inp, sep='\t', header=0, keep_default_na=False, quoting=3)
     sents = Extraction.get_sents_from_df(df)
@@ -60,6 +61,9 @@ if __name__ == '__main__':
             if len(args_str) <= 0 or len(pred) <= 0:
                 useless_n_sam += 1
                 continue
+            for arg in args_str[1:]:
+                if arg.find(SEP) >= 0:
+                    raise ValueError('openie4 format conflict')
             fout.write('{}\t\t{}\t{}\t{}\t{}\n'.format(
-                0, args_str[0], pred_str, ';'.join(args_str[1:]), sent))
+                0, args_str[0], pred_str, SEP.join(args_str[1:]), sent))
     print('totally {} useless samples'.format(useless_n_sam))
