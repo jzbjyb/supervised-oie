@@ -4,16 +4,7 @@ eval_to=$3
 conf=$4
 
 # generate conll data
-pushd ../supervised-oie-benchmark
-python benchmark.py --gold=./oie_corpus/test.oie.orig.correct.head --out=/dev/null \
-    --tabbed=${eval_from}/oie2016.txt --predArgHeadMatch --label=${eval_to}/oie2016.txt.conll &&
-python benchmark.py --gold=../external_datasets/mesquita_2013/processed/web.oie.correct.head \
-    --out=/dev/null --tabbed=${eval_from}/web.txt --predArgHeadMatch --label=${eval_to}/web.txt.conll &&
-python benchmark.py --gold=../external_datasets/mesquita_2013/processed/nyt.oie.correct.head \
-    --out=/dev/null --tabbed=${eval_from}/nyt.txt --predArgHeadMatch --label=${eval_to}/nyt.txt.conll &&
-python benchmark.py --gold=../external_datasets/mesquita_2013/processed/penn.oie.correct.head \
-    --out=/dev/null --tabbed=${eval_from}/penn.txt --predArgHeadMatch --label=${eval_to}/penn.txt.conll &&
-popd
+./extraction_to_conll.sh ${eval_from} ${eval_to}
 
 # generate confidence score
 python ./rnn/model.py --test=${eval_to}/oie2016.txt.conll:${eval_from}/oie2016.txt:${eval_to}/oie2016.txt \
