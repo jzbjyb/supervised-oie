@@ -52,29 +52,36 @@ if __name__ == '__main__':
             pred = []
             args = [[] for i in range(most_n_args)] # collect at most most_n_args arguments
             args_touch = [False] * most_n_args
-            last_arg_ind = -1
+            last_ind = -1 # -1 for start and O, -2 for predicate, others for arguments
             try:
                 for i, w, t in zip(range(len(words)), words, tags):
                     if t.startswith('P'):
                         # predicate
-                        pred.append((w, i))
-                        last_arg_ind = -1
+                        if last_ind != -2:
+                            pred.append([])
+                        pred[-1].append((w, i))
+                        last_ind = -2
                     elif t.startswith('A'):
                         # we don't care about B and I here to avoid bugs from the conll file.
                         ai = int(t[1:t.find('-')])
                         if ai >= len(args):
                             print(t)
                             raise ValueError('get an extraction with more than {} args'.format(most_n_args))
-                        if args_touch[ai] and last_arg_ind != ai:
+                        if args_touch[ai] and last_ind != ai:
                             raise ConllNotValidError('not contiguous span')
                         args_touch[ai] = True
                         args[ai].append((w, i))
-                        last_arg_ind = ai
+                        last_ind = ai
                     else:
-                        last_arg_ind = -1
+                        last_ind = -1
             except ConllNotValidError:
                 useless_n_sam += 1
                 continue
+            if len(pred) != 1:
+                print('predicate span is not unique')
+                useless_n_sam += 1
+                continue
+            pred = pred[0]
             pred_str = pred_to_openie4(pred, words)
             args_str = [arg_to_openie4(arg, words) for arg in args if len(arg) > 0]
             if len(args_str) <= 0 or len(pred) <= 0:
