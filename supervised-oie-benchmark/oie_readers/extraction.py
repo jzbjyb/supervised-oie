@@ -42,6 +42,15 @@ class Extraction:
         return False
 
     @staticmethod
+    def position_equal(x, y):
+        '''
+        return whether x is exactly equal to y
+        '''
+        if x[0] == y[0] and x[-1] == y[-1]:
+            return True
+        return False
+
+    @staticmethod
     def get_sents_from_df(df):
         dfv = df.values
         col = df.columns.values.tolist()

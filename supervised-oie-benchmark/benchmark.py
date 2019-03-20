@@ -1,6 +1,6 @@
 '''
 Usage:
-   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch | --predArgHeadMatchRelex | --predArgHeadMatchExclude] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--skip_no_pred] [--skip_no_gt_pred] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
+   benchmark --gold=GOLD_OIE --out=OUTPUT_FILE (--stanford=STANFORD_OIE | --ollie=OLLIE_OIE |--reverb=REVERB_OIE | --clausie=CLAUSIE_OIE | --openiefour=OPENIEFOUR_OIE | --props=PROPS_OIE | --tabbed=TABBED_OIE) [--exactMatch | --predMatch | --argLexicalMatch | --bowMatch | --exactlySameMatch | --predArgLexicalMatch | --predArgHeadMatch | --predArgHeadLexicalMatch | --predArgHeadMatchRelex | --predArgHeadMatchExclude | --predArgHeadLexicalMatchExclude] [--error] [--label=LABEL_FIEL] [--label_format=LABEL_FORMAT] [--pos_weight=POS_WEIGHT] [--perf_conf] [--skip_no_pred] [--skip_no_gt_pred] [--num_args=NUM_ARGS] [--error-file=ERROR_FILE]
 
 Options:
   --gold=GOLD_OIE              The gold reference Open IE file (by default, it should be under ./oie_corpus/all.oie).
@@ -360,6 +360,43 @@ class Benchmark:
             np.array(list(gold_ext_not_got.items())), showcase)
         self.extraction_showcase(cases, use_gold=False)
 
+    def span_based_prf(self, predicted):
+        tp, fp, fn = 0, 0, 0
+        # only evaluate on the sentences in the gold standard
+        for sent, gold_exs in self.gold.items():
+            # sents without extractions
+            if sent not in predicted:
+                for gold_ex in gold_exs:
+                    fn += 1 + len(gold_ex.args) # pred + args
+                continue
+            predict_exs = predicted[sent]
+            matched = set()  # store all the predict_ex matched with gold standard
+            for i, gold_ex in enumerate(gold_exs):
+                found_pred = False
+                for j, predict_ex in enumerate(predict_exs):
+                    if j in matched:
+                        continue # an extraction could be matched only once
+                    mb, _ = Matcher.predHeadMatch(
+                        gold_ex, predict_ex, ignoreStopwords=True, ignoreCase=True)
+                    if mb:
+                        found_pred = True
+                        matched.add(j)
+                        tp += 1 # pred
+                        atp, afp, afn = Matcher.arg_span_based_cound(gold_ex, predict_ex) # args
+                        tp += atp
+                        fp += afp
+                        fn += afn
+                        break
+                if not found_pred:
+                    fn += 1 + len(gold_ex.args)  # pred + args
+            for j, predict_ex in enumerate(predict_exs):
+                if j in matched:
+                    continue
+                fp += 1 + len(predict_ex.args)  # pred + args
+        precision = tp / (tp + fp + 1e-5)
+        recall = tp / (tp + fn + 1e-5)
+        f1 = 2 * precision * recall / (precision + recall)
+        return precision, recall, f1
 
     def compare(self, predicted, tag, matchingFunc, output_fn, error_file = None, num_args=None, 
         perfect_confidence=False, skip_no_pred=False, skip_no_gt_pred=False):
@@ -367,6 +404,7 @@ class Benchmark:
             Outputs PR curve to output_fn '''
 
         y_true = []
+        y_weight = []
         y_scores = []
         errors = []
 
@@ -437,6 +475,7 @@ class Benchmark:
                                     ignoreCase = True)
                     if match_bool:
                         y_true.append(1)
+                        y_weight.append(match_score)
                         y_scores.append(1 if perfect_confidence else predictedEx.confidence)
                         predictedEx.matched.append(match_score)
                         goldEx.aligned[tag] = predictedEx # save alignment results
@@ -463,15 +502,17 @@ class Benchmark:
             for predictedEx in [x for x in predictedExtractions if len(x.matched) == 0 and len(x.unmatched) != 0]:
                 # Add false positives
                 y_true.append(0)
+                y_weight.append(1)
                 y_scores.append(0 if perfect_confidence else predictedEx.confidence)
 
         y_true = y_true
+        y_weight = y_weight
         y_scores = y_scores
 
         # recall on y_true, y  (r')_scores computes |covered by extractor| / |True in what's covered by extractor|
         # to get to true recall we do:
         # r' * (|True in what's covered by extractor| / |True in gold|) = |true in what's covered| / |true in gold|
-        (p, r), optimal = Benchmark.prCurve(np.array(y_true), np.array(y_scores),
+        (p, r), optimal = Benchmark.prCurve(np.array(y_true), np.array(y_scores), np.array(y_weight),
                                             recallMultiplier = ((correctTotal - unmatchedCount)/float(correctTotal)))
         auc_score = auc(r, p)
         logging.info("AUC: {}\n Optimal (precision, recall, F1, threshold): {}".format(
@@ -498,7 +539,7 @@ class Benchmark:
         return predicted
 
     @staticmethod
-    def prCurve(y_true, y_scores, recallMultiplier):
+    def prCurve(y_true, y_scores, y_weight=None, recallMultiplier=1):
         # Recall multiplier - accounts for the percentage examples unreached
         # Return (precision [list], recall[list]), (Optimal F1, Optimal threshold)
         y_scores = [score \
@@ -506,7 +547,10 @@ class Benchmark:
                     else 0
                     for score in y_scores]
         
-        precision_ls, recall_ls, thresholds = precision_recall_curve(y_true, y_scores)
+        precision_ls, recall_ls, thresholds = \
+            precision_recall_curve(y_true, y_scores, sample_weight=y_weight)
+        if y_weight is not None:
+            recallMultiplier *= np.sum(y_weight * y_true) / (np.sum(y_true) + 1e-5)
         recall_ls = recall_ls * recallMultiplier
         optimal = max([(precision, recall, f_beta(precision, recall, beta = 1), threshold)
                        for ((precision, recall), threshold)
@@ -662,11 +706,17 @@ if __name__ == '__main__':
     elif args['--predArgHeadMatch']:
         matchingFunc = Matcher.predArgHeadMatch
 
+    elif args['--predArgHeadLexicalMatch']:
+        matchingFunc = Matcher.predArgHeadLexicalMatch
+
     elif args['--predArgHeadMatchRelex']:
         matchingFunc = Matcher.predArgHeadMatchRelex
 
     elif args['--predArgHeadMatchExclude']:
         matchingFunc = Matcher.predArgHeadMatchExclude
+
+    elif args['--predArgHeadLexicalMatchExclude']:
+        matchingFunc = Matcher.predArgHeadLexicalMatchExclude
 
     else:
         matchingFunc = Matcher.lexicalMatch
@@ -678,6 +728,8 @@ if __name__ == '__main__':
     if args['--num_args']:
         num_args = set(map(int, args['--num_args'].split(':')))
     logging.info("Writing PR curve of {} to {}".format(predicted_list[0].name, out_filename))
+    precison, recall, f1 = b.span_based_prf(predicted_list[0].oie)
+    print(precison, recall, f1)
     compared_predicated1 = b.compare(predicted = predicted_list[0].oie, tag='sys1',
               matchingFunc = matchingFunc,
               output_fn = out_filename,

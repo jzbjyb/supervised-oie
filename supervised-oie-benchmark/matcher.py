@@ -6,6 +6,7 @@ import nltk
 import numpy as np
 import time
 from oie_readers.extraction import Extraction
+from difflib import SequenceMatcher
 
 parser = CoreNLPParser(url='http://localhost:9001')
 
@@ -45,6 +46,28 @@ class Matcher:
         if depth_list is None:
             depth_list = Matcher.stanford_parse(sentence)
         return sentence[np.argmin(depth_list[start_ind:end_ind]) + start_ind]
+
+    @staticmethod
+    def arg_span_based_cound(ref, ex):
+        mla = min(len(ref.args), len(ex.args))
+        tp, fp, fn = 0, 0, 0
+        for i in range(mla):
+            ref_arg = ref.args[i]
+            arg = ex.args[i]
+            # use position or str to evaluate
+            if type(ref_arg) is tuple and type(arg) is tuple:
+                matched = Extraction.position_equal(ref_arg[1], arg[1])
+            else:
+                matched = ex.elementToStr(arg, print_indices=False) == \
+                          ref.elementToStr(ref_arg, print_indices=False)
+            if matched:
+                tp += 1
+            else:
+                fp += 1
+                fn += 1
+        fp += len(ex.args) - mla
+        fn += len(ref.args) - mla
+        return tp, fp, fn
 
     @staticmethod
     def bowMatch(ref, ex, ignoreStopwords, ignoreCase):
@@ -121,6 +144,16 @@ class Matcher:
             return pred >= 0, int(pred >= 0)
 
     @staticmethod
+    def predHeadLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
+        mb, ms = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        if not mb:
+            return mb, ms
+        ep = ex.elementToStr(ex.pred, print_indices=False)
+        rp = ref.elementToStr(ref.pred, print_indices=False)
+        s = SequenceMatcher(None, ep, rp).ratio()
+        return True, s
+
+    @staticmethod
     def argLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
         """
         Return whehter gold and predicted extractions agree on the arguments
@@ -160,6 +193,19 @@ class Matcher:
                 if ind < 0:
                     return False, 0
         return True, 1
+
+    @staticmethod
+    def argHeadLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
+        mb, ms = Matcher.argHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
+        if not mb:
+            return mb, ms
+        s_li = []
+        for i, arg in enumerate(ex.args):
+            ref_arg = ref.args[i]
+            ea = ex.elementToStr(arg, print_indices=False)
+            ra = ref.elementToStr(ref_arg, print_indices=False)
+            s_li.append(SequenceMatcher(None, ea, ra).ratio())
+        return True, np.mean(s_li)
     
     @staticmethod
     def argHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase):
@@ -199,6 +245,20 @@ class Matcher:
                 if ind < 0:
                     return False, 0
         return True, 1
+
+    @staticmethod
+    def argHeadLexicalMatchExclude(ref, ex, ignoreStopwords, ignoreCase):
+        mb, ms = Matcher.argHeadMatchExclude(ref, ex, ignoreStopwords, ignoreCase)
+        if not mb:
+            return mb, ms
+        s_li = []
+        for i, _ in enumerate(ref.heads[1:]):
+            arg = ex.args[i]
+            ref_arg = ref.args[i]
+            ea = ex.elementToStr(arg, print_indices=False)
+            ra = ref.elementToStr(ref_arg, print_indices=False)
+            s_li.append(SequenceMatcher(None, ea, ra).ratio())
+        return True, np.mean(s_li)
 
     @staticmethod
     def bleuMatch(ref, ex, ignoreStopwords, ignoreCase):
@@ -250,6 +310,12 @@ class Matcher:
         return pred and arg, min(pred_score, arg_score)
 
     @staticmethod
+    def predArgHeadLexicalMatch(ref, ex, ignoreStopwords, ignoreCase):
+        pred, pred_score = Matcher.predHeadLexicalMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argHeadLexicalMatch(ref, ex, ignoreStopwords, ignoreCase)
+        return pred and arg, np.mean([pred_score, arg_score])
+
+    @staticmethod
     def predArgHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase):
         pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
         arg, arg_score = Matcher.argHeadMatchRelex(ref, ex, ignoreStopwords, ignoreCase)
@@ -260,6 +326,12 @@ class Matcher:
         pred, pred_score = Matcher.predHeadMatch(ref, ex, ignoreStopwords, ignoreCase)
         arg, arg_score = Matcher.argHeadMatchExclude(ref, ex, ignoreStopwords, ignoreCase)
         return pred and arg, min(pred_score, arg_score)
+
+    @staticmethod
+    def predArgHeadLexicalMatchExclude(ref, ex, ignoreStopwords, ignoreCase):
+        pred, pred_score = Matcher.predHeadLexicalMatch(ref, ex, ignoreStopwords, ignoreCase)
+        arg, arg_score = Matcher.argHeadLexicalMatchExclude(ref, ex, ignoreStopwords, ignoreCase)
+        return pred and arg, np.mean([pred_score, arg_score])
 
     @staticmethod
     def removeStopwords(ls):
