@@ -651,6 +651,14 @@ if __name__ == '__main__':
     args = docopt.docopt(__doc__)
     logging.debug(args)
 
+    if args['--tabbed'].endswith('.label'):
+        if not args['--gold'].endswith('.reorder'):
+            print('warning: the gold standard file might not be in the same order with extractions')
+        print('for error analysi')
+        # combine ex and gt file for comparison and error analysis
+        combine_ex_and_gt(args['--tabbed'], args['--gold'], args['--out'])
+        exit(0)
+
     if args['--stanford']:
         reader = StanfordReader
         in_files = args['--stanford']
