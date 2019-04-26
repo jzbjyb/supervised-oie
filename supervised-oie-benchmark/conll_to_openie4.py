@@ -19,6 +19,11 @@ def arg_to_openie4(sub_tokens, tokens):
     ed = st + len_in_char(sub)
     return '{}({},List([{}, {})))'.format('SimpleArgument', sub, st, ed)
 
+def pred_arg_to_eval(sub_tokens, tokens):
+    tokens = [t[0] for t in sub_tokens]
+    inds = [t[1] for t in sub_tokens]
+    return str((' '.join(tokens), inds))
+
 def pred_to_openie4(sub_tokens, tokens):
     sts, eds = [], []
     for w in sub_tokens:
@@ -32,8 +37,12 @@ def pred_to_openie4(sub_tokens, tokens):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='convert conll file (used in training) to openie4 format')
-    parser.add_argument('-inp', type=str, help='input conll files separated by')
-    parser.add_argument('-out', type=str, help='output file in openie4 format')
+    parser.add_argument('--inp', type=str, help='input conll files separated by')
+    parser.add_argument('--out', type=str, help='output file in openie4 format')
+    parser.add_argument('--rm_coor', help='whether to remove predicates with multiple extractions', 
+        action='store_true')
+    parser.add_argument('--format', help='output format', 
+        choices=['openie4', 'eval'], default='openie4')
     opt = parser.parse_args()
 
     most_n_args = 6
@@ -42,7 +51,9 @@ if __name__ == '__main__':
     df = pd.read_csv(opt.inp, sep='\t', header=0, keep_default_na=False, quoting=3)
     sents = Extraction.get_sents_from_df(df)
     useless_n_sam = 0
-    n_sam, final_n_sam = 0, 0
+    n_sam = 0
+    all_sent_pred_set, rm_set = set(), set()
+    results = []
     with open(opt.out, 'w') as fout:
         for sent in sents:
             n_sam += 1
@@ -82,16 +93,35 @@ if __name__ == '__main__':
                 useless_n_sam += 1
                 continue
             pred = pred[0]
-            pred_str = pred_to_openie4(pred, words)
-            args_str = [arg_to_openie4(arg, words) for arg in args if len(arg) > 0]
-            if len(args_str) <= 0 or len(pred) <= 0:
+            if len(args) <= 0 or len(pred) <= 0:
                 useless_n_sam += 1
                 continue
-            for arg in args_str[1:]:
-                if arg.find(SEP) >= 0:
-                    raise ValueError('openie4 format conflict')
-            final_n_sam += 1
-            fout.write('{}\t\t{}\t{}\t{}\t{}\n'.format(
-                0, args_str[0], pred_str, SEP.join(args_str[1:]), sent))
+            # remove extractions with the same predicate
+            sent_pred_hash = '{}<rm_coor>{}'.format(sent, [i[1] for i in pred])
+            if opt.rm_coor and sent_pred_hash in all_sent_pred_set:
+                useless_n_sam += 1
+                if sent_pred_hash not in rm_set:
+                    useless_n_sam += 1
+                    rm_set.add(sent_pred_hash)
+            else:
+                all_sent_pred_set.add(sent_pred_hash)
+            if opt.format == 'openie4':
+                pred_str = pred_to_openie4(pred, words)
+                args_str = [arg_to_openie4(arg, words) for arg in args if len(arg) > 0]
+                for arg in args_str[1:]:
+                    if arg.find(SEP) >= 0:
+                        raise ValueError('openie4 format conflict')
+                results.append((sent_pred_hash, '{}\t\t{}\t{}\t{}\t{}\n'.format(
+                    0, args_str[0], pred_str, SEP.join(args_str[1:]), sent)))
+            elif opt.format == 'eval':
+                pred_str = pred_arg_to_eval(pred, words)
+                args_str = [pred_arg_to_eval(arg, words) for arg in args if len(arg) > 0]
+                results.append((sent_pred_hash, '{}\t{}\t{}\n'.format(
+                    sent, pred_str, '\t'.join(args_str))))
+        # write to file
+        for r in results:
+            if r[0] in rm_set:
+                continue
+            fout.write(r[1])
     print('totally {} useless samples'.format(useless_n_sam))
-    print('from {} to {} samples'.format(n_sam, final_n_sam))
+    print('from {} to {} samples'.format(n_sam, n_sam-useless_n_sam))
