@@ -93,7 +93,13 @@ if __name__ == '__main__':
                 useless_n_sam += 1
                 continue
             pred = pred[0]
+            args = [arg for arg in args if len(arg) > 0]
+            # remove extractions without arguments or predicates
             if len(args) <= 0 or len(pred) <= 0:
+                useless_n_sam += 1
+                continue
+            # remove extractions with only one argument
+            if len(args) <= 1:
                 useless_n_sam += 1
                 continue
             # remove extractions with the same predicate
