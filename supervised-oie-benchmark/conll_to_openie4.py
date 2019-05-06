@@ -39,6 +39,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='convert conll file (used in training) to openie4 format')
     parser.add_argument('--inp', type=str, help='input conll files separated by')
     parser.add_argument('--out', type=str, help='output file in openie4 format')
+    parser.add_argument('--rm_less1arg', help='whether to remove extractions with less than one argument',
+                        action='store_true')
     parser.add_argument('--rm_coor', help='whether to remove predicates with multiple extractions', 
         action='store_true')
     parser.add_argument('--format', help='output format', 
@@ -89,7 +91,6 @@ if __name__ == '__main__':
                 useless_n_sam += 1
                 continue
             if len(pred) != 1:
-                print('predicate span is not unique')
                 useless_n_sam += 1
                 continue
             pred = pred[0]
@@ -99,7 +100,7 @@ if __name__ == '__main__':
                 useless_n_sam += 1
                 continue
             # remove extractions with only one argument
-            if len(args) <= 1:
+            if opt.rm_less1arg and len(args) <= 1:
                 useless_n_sam += 1
                 continue
             # remove extractions with the same predicate
