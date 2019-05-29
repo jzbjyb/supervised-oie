@@ -7,7 +7,9 @@ match_nary="--predArgHeadMatch"
 #match_nary="--exactlySameMatch"
 match_binary="--predArgHeadMatchExclude"
 
-oie_file="./oie_corpus/test.oie.orig.correct.rm_coor.head"
+oie_file="./oie_corpus/test.oie.orig.correct.rm_1arg.rm_coor.head"
+#oie_file="./oie_corpus/test.oie.orig.correct.rm_coor.head"
+#oie_file="./oie_corpus/test.oie.orig.correct.head"
 
 pushd ../supervised-oie-benchmark
 echo "=== oie2016 ==="
